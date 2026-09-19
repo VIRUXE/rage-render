@@ -140,22 +140,39 @@ pub(crate) fn in_band(z: f32, band: Option<(f32, f32)>) -> bool {
     }
 }
 
-/// World-space `x0,y0,x1,y1` framing what is worth looking at: the rooms,
-/// portals, entities, meshes, markers and the interior or sunk navmesh of the
-/// enabled layers. Exterior navmesh polygons sprawl across a whole cell and
-/// would shrink an interior to a speck, so they only frame the page when
-/// there is nothing else on it.
-pub(crate) fn scene_bounds(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>) -> Option<[f32; 4]> {
-    bounds_of(scene, layers, band, false).or_else(|| bounds_of(scene, layers, band, true))
+/// What a default region is framed on, best first. An MLO folder carries
+/// world-space collision chunks and a navmesh cell covers a whole city block,
+/// so framing those alongside the interior would shrink it to a speck: each
+/// tier is only consulted when the ones before it found nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tier {
+    /// Rooms, portals, entities and the interior or sunk navmesh.
+    Interior,
+    /// The collision and drawable meshes.
+    Meshes,
+    /// Exterior navmesh polygons.
+    ExteriorNav,
 }
 
-/// World-space `x0,y0,x1,y1` covering every enabled layer within the band,
-/// with or without the exterior navmesh.
-fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, exterior_nav: bool) -> Option<[f32; 4]> {
+/// World-space `x0,y0,x1,y1` framing what is worth looking at, by [`Tier`].
+/// Markers are always included, but never decide the tier by themselves.
+pub(crate) fn scene_bounds(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>) -> Option<[f32; 4]> {
+    let mut bb = [Tier::Interior, Tier::Meshes, Tier::ExteriorNav]
+        .into_iter()
+        .find_map(|tier| bounds_of(scene, layers, band, tier));
+    for m in &scene.markers {
+        grow(&mut bb, m.x, m.y);
+    }
+    bb
+}
+
+/// World-space `x0,y0,x1,y1` covering one tier of the enabled layers, within
+/// the band.
+fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, tier: Tier) -> Option<[f32; 4]> {
     let mut bb = None;
     for layer in layers {
         match layer {
-            Layer::Rooms => {
+            Layer::Rooms if tier == Tier::Interior => {
                 for r in &scene.rooms {
                     if band.is_some_and(|(lo, hi)| r.z_hi < lo || r.z_lo > hi) {
                         continue;
@@ -165,7 +182,7 @@ fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, exterior
                     }
                 }
             }
-            Layer::Portals => {
+            Layer::Portals if tier == Tier::Interior => {
                 for p in &scene.portals {
                     let lo = p.corners.iter().fold(f32::MAX, |m, v| m.min(v.z));
                     let hi = p.corners.iter().fold(f32::MIN, |m, v| m.max(v.z));
@@ -177,14 +194,14 @@ fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, exterior
                     }
                 }
             }
-            Layer::Entities => {
+            Layer::Entities if tier == Tier::Interior => {
                 for e in &scene.entities {
                     if in_band(e.position.z, band) {
                         grow(&mut bb, e.position.x, e.position.y);
                     }
                 }
             }
-            Layer::Collision | Layer::Drawable => {
+            Layer::Collision | Layer::Drawable if tier == Tier::Meshes => {
                 let tris = if *layer == Layer::Collision { &scene.collision } else { &scene.drawable };
                 for t in tris {
                     match band {
@@ -203,9 +220,9 @@ fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, exterior
                     }
                 }
             }
-            Layer::Navmesh => {
+            Layer::Navmesh if tier != Tier::Meshes => {
                 for n in &scene.navmesh {
-                    if n.class == NavClass::Exterior && !exterior_nav {
+                    if (n.class == NavClass::Exterior) != (tier == Tier::ExteriorNav) {
                         continue;
                     }
                     if !n.vertices.iter().any(|v| in_band(v.z, band)) {
@@ -216,10 +233,8 @@ fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, exterior
                     }
                 }
             }
+            _ => {}
         }
-    }
-    for m in &scene.markers {
-        grow(&mut bb, m.x, m.y);
     }
     bb
 }

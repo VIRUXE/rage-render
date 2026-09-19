@@ -652,6 +652,31 @@ mod tests {
     }
 
     #[test]
+    fn the_default_region_frames_the_room_not_the_world_collision() {
+        // An MLO folder often carries vanilla world-space collision chunks;
+        // framing those makes the interior a speck on a 22941x38106 px page.
+        let mut scene = room_scene();
+        scene.collision = vec![
+            Tri { v: [Vec3::new(-800.0, -1200.0, 0.0), Vec3::new(500.0, -1200.0, 0.0), Vec3::new(500.0, 600.0, 0.0)] },
+            Tri { v: [Vec3::new(-800.0, -1200.0, 0.0), Vec3::new(500.0, 600.0, 0.0), Vec3::new(-800.0, 600.0, 0.0)] },
+        ];
+        let (_, report) = plan_png(&scene, &PlanOptions::default()).expect("a plan");
+        assert_eq!(report.region, [-2.0, -2.0, 8.0, 6.0], "framed the world collision");
+    }
+
+    #[test]
+    fn collision_frames_the_page_when_there_is_no_interior() {
+        let scene = Scene {
+            collision: vec![Tri {
+                v: [Vec3::new(0.0, 0.0, 0.0), Vec3::new(6.0, 0.0, 0.0), Vec3::new(6.0, 4.0, 0.0)],
+            }],
+            ..Default::default()
+        };
+        let (_, report) = plan_png(&scene, &PlanOptions::default()).expect("a plan");
+        assert_eq!(report.region, [-2.0, -2.0, 8.0, 6.0]);
+    }
+
+    #[test]
     fn exterior_navmesh_frames_the_page_when_it_is_all_there_is() {
         let scene = Scene { navmesh: vec![nav_rect(0.0, 0.0, 6.0, 4.0, NavClass::Exterior)], ..Default::default() };
         let (_, report) = plan_png(&scene, &PlanOptions::default()).expect("a plan");
