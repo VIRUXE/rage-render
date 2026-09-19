@@ -6,6 +6,7 @@
 pub mod render;
 pub mod font;
 pub mod sheet;
+pub mod plan;
 pub mod wasm;
 
 pub use font::{draw_text, text_width, FONT_5X7, GLYPH_H, GLYPH_W};
