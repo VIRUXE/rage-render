@@ -48,21 +48,20 @@ shaded underlay, and the navmesh, on a page with a grid, axes, a scale bar, a
 north arrow and a legend.
 
 ```rust
-use rage_render::{plan_svg, Layer, PlanOptions, Scene, FLOOR_BAND};
+use rage_formats::Vec2;
+use rage_render::{plan_svg, Layer, PlanOptions, RoomShape, Scene};
 
 let mut scene = Scene { title: "v_kitchen".into(), ..Default::default() };
-// fill scene.rooms / portals / entities / collision / navmesh from parsed files
-
-let options = PlanOptions {
-    scale: 30.0,                                    // pixels per metre
-    z_band: Some((1.0 + FLOOR_BAND.0, 1.0 + FLOOR_BAND.1)), // one storey
-    layers: vec![Layer::Rooms, Layer::Portals, Layer::Collision],
-    labels: true,
-    ..Default::default()
-};
-let (svg, report) = plan_svg(&scene, &options)?;
+scene.rooms.push(RoomShape {
+    index: 0, name: "kitchen".into(), z_lo: 0.0, z_hi: 3.0,
+    footprint: [Vec2::new(-4.0, -3.0), Vec2::new(4.0, -3.0), Vec2::new(4.0, 3.0), Vec2::new(-4.0, 3.0)],
+});
+let (svg, report) = plan_svg(&scene, &PlanOptions { layers: vec![Layer::Rooms], ..Default::default() })?;
 println!("{}x{} px, region {:?}", report.width, report.height, report.region);
 ```
+
+(Checked against the crate with `cargo check --example`, then removed — the
+crate has no README doc-test harness to leave it in.)
 
 The SVG is hybrid: the triangle meshes are rasterised into one embedded PNG,
 everything else stays vector. `plan_png` draws the same page into an
