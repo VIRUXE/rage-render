@@ -290,16 +290,86 @@ pub(crate) fn draw_north_arrow(canvas: &mut dyn Canvas, l: &Layout) {
 
 /// The legend column, one row per drawn layer and entity set.
 pub(crate) fn draw_legend(canvas: &mut dyn Canvas, l: &Layout, rows: &[LegendRow]) {
-    for (i, row) in rows.iter().enumerate() {
+    // The column is as tall as the map and no taller: an interior with
+    // dozens of entity sets used to run its legend off the bottom of the
+    // page. What does not fit is summed up in a last row.
+    let capacity = (l.map.h / LEGEND_ROW_H).floor().max(1.0) as usize;
+    let shown = if rows.len() > capacity { capacity - 1 } else { rows.len() };
+    let text_w = LEGEND_W - 18.0 - MARGIN;
+
+    for (i, row) in rows.iter().take(shown).enumerate() {
         let y = l.map.y + i as f32 * LEGEND_ROW_H;
         canvas.rect(l.legend_x, y + 1.0, 12.0, 12.0, Some(row.swatch), Some(palette::AXIS_TEXT));
-        canvas.text(l.legend_x + 18.0, y + 4.0, &row.text, TextSize::Small, palette::INK, false);
+        // A long entity-set name would otherwise spill past the column into
+        // the page margin.
+        let (size, text) = fit_text(&row.text, text_w, TextSize::Small);
+        canvas.text(l.legend_x + 18.0, y + 4.0, &text, size, palette::INK, false);
+    }
+    if shown < rows.len() {
+        let y = l.map.y + shown as f32 * LEGEND_ROW_H;
+        let text = format!("+{} more", rows.len() - shown);
+        canvas.text(l.legend_x + 18.0, y + 4.0, &text, TextSize::Small, palette::AXIS_TEXT, false);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A canvas that keeps what it was asked to draw, so a test can ask
+    /// where things landed.
+    #[derive(Default)]
+    struct Recorder {
+        texts: Vec<(f32, f32, String)>,
+        rects: Vec<(f32, f32, f32, f32)>,
+    }
+
+    impl Canvas for Recorder {
+        fn fill_polygon(&mut self, _pts: &[(f32, f32)], _fill: Rgba8) {}
+        fn stroke_polygon(&mut self, _pts: &[(f32, f32)], _stroke: Rgba8, _width: f32, _dash: Option<(f32, f32)>) {}
+        fn line(&mut self, _a: (f32, f32), _b: (f32, f32), _stroke: Rgba8, _width: f32, _dash: Option<(f32, f32)>) {}
+        fn circle(&mut self, _c: (f32, f32), _r: f32, _fill: Rgba8, _stroke: Option<Rgba8>) {}
+        fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, _fill: Option<Rgba8>, _stroke: Option<Rgba8>) {
+            self.rects.push((x, y, w, h));
+        }
+        fn text(&mut self, x: f32, y: f32, s: &str, _size: TextSize, _color: Rgba8, _halo: bool) {
+            self.texts.push((x, y, s.to_string()));
+        }
+        fn text_width(&self, s: &str, size: TextSize) -> f32 {
+            measure(s, size)
+        }
+        fn image(&mut self, _x: f32, _y: f32, _img: &image::RgbaImage) {}
+        fn clip(&mut self, _rect: Option<(f32, f32, f32, f32)>) {}
+    }
+
+    #[test]
+    fn a_long_legend_stops_at_the_bottom_of_the_map() {
+        // A short page: 200 px of map is room for eleven 18 px rows.
+        let l = layout([0.0, 0.0, 10.0, 10.0], 20.0, 60, 1);
+        let rows: Vec<LegendRow> = (0..60)
+            .map(|i| LegendRow { swatch: palette::INK, text: format!("entity set number {i} with a very long name") })
+            .collect();
+        let mut canvas = Recorder::default();
+        draw_legend(&mut canvas, &l, &rows);
+
+        let bottom = l.map.y + l.map.h;
+        for (_, y, text) in &canvas.texts {
+            assert!(y + TextSize::Small.height() <= bottom, "row '{text}' at y={y} runs past the map bottom {bottom}");
+        }
+        for (_, y, _, h) in &canvas.rects {
+            assert!(y + h <= bottom, "swatch at y={y} runs past the map bottom {bottom}");
+        }
+
+        let last = canvas.texts.last().expect("something was drawn");
+        assert!(last.2.starts_with('+') && last.2.ends_with(" more"), "expected a '+N more' row, got '{}'", last.2);
+        let shown = canvas.texts.len() - 1;
+        assert_eq!(last.2, format!("+{} more", 60 - shown));
+
+        // Every name was cut to the column, margin included.
+        for (_, _, text) in &canvas.texts {
+            assert!(measure(text, TextSize::Small) <= LEGEND_W - 18.0 - MARGIN, "'{text}' overruns the column");
+        }
+    }
 
     #[test]
     fn nice_steps_are_round_and_wide_enough() {
