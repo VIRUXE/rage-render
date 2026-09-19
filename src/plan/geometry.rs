@@ -125,6 +125,13 @@ fn grow(bb: &mut Option<[f32; 4]>, x: f32, y: f32) {
     }
 }
 
+/// Is every coordinate of `v` a real number? Shapes that fail this are
+/// dropped before they reach a canvas, where they would become `NaN` in the
+/// SVG markup or a runaway scanline in the rasteriser.
+pub(crate) fn finite(v: Vec3) -> bool {
+    v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
+}
+
 /// Is `z` inside the band? Everything is, when there is no band.
 pub(crate) fn in_band(z: f32, band: Option<(f32, f32)>) -> bool {
     match band {

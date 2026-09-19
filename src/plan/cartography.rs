@@ -174,24 +174,38 @@ pub(crate) struct LegendRow {
     pub(crate) text: String,
 }
 
+/// The grid or tick lines across `[lo, hi]`, as `(index, world)` pairs. The
+/// count is settled up front in f64 and capped at the number of pixels the
+/// axis has, so a region far from the origin — where consecutive world values
+/// round to the same f32 — or one far wider than its page can neither stall
+/// nor draw more lines than there are pixels to draw them on.
+fn axis_lines(lo: f32, hi: f32, step: f32, axis_px: f32) -> Vec<(i64, f32)> {
+    if !(step > 0.0) || !lo.is_finite() || !hi.is_finite() || hi < lo {
+        return Vec::new();
+    }
+    let (lo, hi, step) = (lo as f64, hi as f64, step as f64);
+    let k0 = (lo / step).ceil();
+    let count = ((hi - k0 * step) / step).floor() + 1.0;
+    let count = count.min(axis_px as f64).max(0.0) as i64;
+    (0..count)
+        .map(|i| ((k0 as i64).saturating_add(i), ((k0 + i as f64) * step) as f32))
+        .collect()
+}
+
 /// The minor/major grid, drawn under everything else.
 pub(crate) fn draw_grid(canvas: &mut dyn Canvas, l: &Layout, region: [f32; 4]) {
     let step = nice_step(l.transform.scale, MIN_GRID_GAP);
     let (map, t) = (l.map, l.transform);
 
-    let mut k = (region[0] / step).ceil() as i64;
-    while (k as f32) * step <= region[2] + 1e-4 {
-        let x = t.to_px(k as f32 * step, region[3]).0;
+    for (k, world) in axis_lines(region[0], region[2], step, map.w) {
+        let x = t.to_px(world, region[3]).0;
         let colour = if k % 5 == 0 { palette::GRID_MAJOR } else { palette::GRID_MINOR };
         canvas.line((x, map.y), (x, map.y + map.h), colour, 1.0, None);
-        k += 1;
     }
-    let mut k = (region[1] / step).ceil() as i64;
-    while (k as f32) * step <= region[3] + 1e-4 {
-        let y = t.to_px(region[0], k as f32 * step).1;
+    for (k, world) in axis_lines(region[1], region[3], step, map.h) {
+        let y = t.to_px(region[0], world).1;
         let colour = if k % 5 == 0 { palette::GRID_MAJOR } else { palette::GRID_MINOR };
         canvas.line((map.x, y), (map.x + map.w, y), colour, 1.0, None);
-        k += 1;
     }
 }
 
@@ -210,25 +224,19 @@ pub(crate) fn draw_axes(canvas: &mut dyn Canvas, l: &Layout, region: [f32; 4]) {
     let (map, t) = (l.map, l.transform);
     canvas.rect(map.x, map.y, map.w, map.h, None, Some(palette::AXIS_TEXT));
 
-    let mut k = (region[0] / step).ceil() as i64;
-    while (k as f32) * step <= region[2] + 1e-4 {
-        let world = k as f32 * step;
+    for (_, world) in axis_lines(region[0], region[2], step, map.w) {
         let x = t.to_px(world, region[3]).0;
         canvas.line((x, map.y + map.h), (x, map.y + map.h + 4.0), palette::AXIS_TEXT, 1.0, None);
         let text = tick_text(world);
         let w = canvas.text_width(&text, TextSize::Small);
         canvas.text(x - w / 2.0, map.y + map.h + 7.0, &text, TextSize::Small, palette::AXIS_TEXT, false);
-        k += 1;
     }
-    let mut k = (region[1] / step).ceil() as i64;
-    while (k as f32) * step <= region[3] + 1e-4 {
-        let world = k as f32 * step;
+    for (_, world) in axis_lines(region[1], region[3], step, map.h) {
         let y = t.to_px(region[0], world).1;
         canvas.line((map.x - 4.0, y), (map.x, y), palette::AXIS_TEXT, 1.0, None);
         let text = tick_text(world);
         let w = canvas.text_width(&text, TextSize::Small);
         canvas.text(map.x - 7.0 - w, y - TextSize::Small.height() / 2.0, &text, TextSize::Small, palette::AXIS_TEXT, false);
-        k += 1;
     }
 }
 
@@ -291,6 +299,20 @@ mod tests {
         assert!((px - (l.map.x + l.map.w)).abs() < 1e-3);
         assert!((py - (l.map.y + l.map.h)).abs() < 1e-3);
         assert_eq!((l.map.w, l.map.h), (80.0, 120.0));
+    }
+
+    #[test]
+    fn axis_lines_are_bounded_by_the_page() {
+        let lines = axis_lines(0.0, 10.0, 2.0, 300.0);
+        assert_eq!(lines, vec![(0, 0.0), (1, 2.0), (2, 4.0), (3, 6.0), (4, 8.0), (5, 10.0)]);
+        // A region far wider than its page draws at most one line per pixel.
+        assert_eq!(axis_lines(0.0, 1e12, 500.0, 1000.0).len(), 1000);
+        // Far from the origin f32 cannot even hold the ten-metre span, so one
+        // line is all there is to draw — and, crucially, the count ends.
+        assert_eq!(axis_lines(1e12, 1e12 + 10.0, 2.0, 300.0).len(), 1);
+        assert!((1..=300).contains(&axis_lines(1e9, 1e9 + 500.0, 2.0, 300.0).len()));
+        assert!(axis_lines(0.0, 10.0, 0.0, 300.0).is_empty());
+        assert!(axis_lines(f32::NAN, 10.0, 2.0, 300.0).is_empty());
     }
 
     #[test]

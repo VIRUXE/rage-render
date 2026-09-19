@@ -152,7 +152,7 @@ pub(crate) fn entities(scene: &Scene, prep: &Prepared, opts: &PlanOptions, canva
 /// Caller markers: a black diamond and a haloed label, always drawn.
 pub(crate) fn markers(scene: &Scene, prep: &Prepared, canvas: &mut dyn Canvas, labels: &mut Vec<LabelRequest>) {
     let t = &prep.layout.transform;
-    for marker in &scene.markers {
+    for marker in scene.markers.iter().filter(|m| m.x.is_finite() && m.y.is_finite()) {
         let (px, py) = t.to_px(marker.x, marker.y);
         let r = 5.0;
         canvas.fill_polygon(&[(px, py - r), (px + r, py), (px, py + r), (px - r, py)], palette::INK);

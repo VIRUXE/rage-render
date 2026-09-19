@@ -267,32 +267,42 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
     if !region.iter().all(|v| v.is_finite()) {
         anyhow::bail!("nothing to draw: the region is not a finite rectangle");
     }
-    // A point region (one entity, one marker) still deserves a page.
-    if region[2] - region[0] < 0.5 {
-        let c = (region[0] + region[2]) / 2.0;
-        region[0] = c - 0.25;
-        region[2] = c + 0.25;
-    }
-    if region[3] - region[1] < 0.5 {
-        let c = (region[1] + region[3]) / 2.0;
-        region[1] = c - 0.25;
-        region[3] = c + 0.25;
+    // A point region (one entity, one marker) still deserves a page. Half a
+    // metre is below f32's resolution far from the origin, so the padding
+    // grows with the magnitude of the coordinates it has to separate.
+    for (lo, hi) in [(0, 2), (1, 3)] {
+        if region[hi] - region[lo] < 0.5 {
+            let c = (region[lo] + region[hi]) / 2.0;
+            let pad = 0.25f32.max(c.abs() * f32::EPSILON * 8.0);
+            region[lo] = c - pad;
+            region[hi] = c + pad;
+        }
     }
     if !(opts.scale > 0.0) {
         anyhow::bail!("scale must be greater than zero");
     }
 
-    let map_w = ((region[2] - region[0]) * opts.scale).round().max(1.0);
-    let map_h = ((region[3] - region[1]) * opts.scale).round().max(1.0);
-    if map_w as u64 * map_h as u64 > opts.max_pixels {
-        anyhow::bail!("{}x{} px is too large; lower --scale or shrink --region", map_w as u64, map_h as u64);
+    // An extent wide enough to overflow f32 would saturate every later cast,
+    // so it is refused here rather than turned into a u32::MAX canvas.
+    let extent = [region[2] - region[0], region[3] - region[1]];
+    if !extent.iter().all(|e| e.is_finite() && *e > 0.0) {
+        anyhow::bail!(
+            "a region spanning {}x{} m is too large; shrink --region",
+            extent[0],
+            extent[1]
+        );
+    }
+    let map_w = (extent[0] * opts.scale).round().max(1.0);
+    let map_h = (extent[1] * opts.scale).round().max(1.0);
+    if !map_w.is_finite() || !map_h.is_finite() || map_w as f64 * map_h as f64 > opts.max_pixels as f64 {
+        anyhow::bail!("{map_w:.0}x{map_h:.0} px is too large; lower --scale or shrink --region");
     }
 
     let mut rooms = Vec::new();
     if enabled(Layer::Rooms) {
         for (i, r) in scene.rooms.iter().enumerate() {
             let outside = matches!(band, Some((lo, hi)) if r.z_hi < lo || r.z_lo > hi);
-            if !outside {
+            if !outside && r.footprint.iter().all(|v| v.x.is_finite() && v.y.is_finite()) {
                 rooms.push(i);
             }
         }
@@ -306,7 +316,7 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
             let lo = p.corners.iter().fold(f32::MAX, |m, v| m.min(v.z));
             let hi = p.corners.iter().fold(f32::MIN, |m, v| m.max(v.z));
             let outside = matches!(band, Some((blo, bhi)) if hi < blo || lo > bhi);
-            if !outside {
+            if !outside && p.corners.iter().all(|v| geometry::finite(*v)) {
                 portals.push(i);
             }
         }
@@ -314,7 +324,7 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
     let mut entities = Vec::new();
     if enabled(Layer::Entities) {
         for (i, e) in scene.entities.iter().enumerate() {
-            if in_band(e.position.z, band) {
+            if in_band(e.position.z, band) && geometry::finite(e.position) {
                 entities.push(i);
             }
         }
@@ -322,7 +332,10 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
     let mut navmesh = Vec::new();
     if enabled(Layer::Navmesh) {
         for (i, n) in scene.navmesh.iter().enumerate() {
-            if n.vertices.len() >= 3 && n.vertices.iter().any(|v| in_band(v.z, band)) {
+            if n.vertices.len() >= 3
+                && n.vertices.iter().any(|v| in_band(v.z, band))
+                && n.vertices.iter().all(|v| geometry::finite(*v))
+            {
                 navmesh.push(i);
             }
         }
@@ -569,6 +582,83 @@ mod tests {
         let opts = PlanOptions { scale: 500.0, max_pixels: 10_000, ..Default::default() };
         let err = plan_png(&room_scene(), &opts).unwrap_err().to_string();
         assert!(err.contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn an_enormous_region_is_refused_not_overflowed() {
+        // The extent overflows f32 to infinity; the guard must catch that
+        // rather than saturate into a u32::MAX canvas.
+        let opts = PlanOptions { region: Some([-2e38, -2e38, 2e38, 2e38]), ..Default::default() };
+        let err = plan_png(&room_scene(), &opts).unwrap_err().to_string();
+        assert!(err.contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn a_huge_region_on_a_small_page_still_terminates() {
+        // A trillion metres at a billionth of a pixel per metre. The grid step
+        // caps out at 500 m, so a loop that walks one step at a time would draw
+        // two billion lines onto a thousand-pixel page.
+        let opts = PlanOptions { region: Some([0.0, 0.0, 1e12, 1e10]), scale: 1e-9, ..Default::default() };
+        let (img, report) = plan_png(&Scene::default(), &opts).expect("a plan");
+        let expected = cartography::layout(report.region, 1e-9, 0, 0);
+        assert_eq!((img.width(), img.height()), (expected.width, expected.height));
+        assert_eq!(img.width(), 1072, "a thousand-pixel map, its axis and margins");
+    }
+
+    #[test]
+    fn a_region_far_from_the_origin_still_terminates() {
+        // At 1e9 metres the f32 spacing is wider than the grid step, so a
+        // grid loop that advances by adding the step never finishes.
+        // Padding a region f32 cannot resolve makes it kilometres wide, so it
+        // needs a scale that still fits on a page.
+        let opts = PlanOptions { region: Some([1e9, 1e9, 1e9 + 10.0, 1e9 + 8.0]), scale: 0.1, ..Default::default() };
+        let (img, report) = plan_png(&Scene::default(), &opts).expect("a plan");
+        assert!(img.width() > 0 && img.height() > 0);
+        // f32 cannot resolve ten metres at a billion, so the region is padded
+        // out to something it can, rather than collapsing to nothing.
+        assert!(report.region[2] > report.region[0] && report.region[3] > report.region[1]);
+    }
+
+    #[test]
+    fn shapes_with_non_finite_vertices_are_dropped() {
+        let mut scene = room_scene();
+        scene.rooms.push(RoomShape {
+            index: 2,
+            name: "broken".into(),
+            footprint: [
+                Vec2::new(f32::NAN, 0.0),
+                Vec2::new(6.0, 0.0),
+                Vec2::new(6.0, 4.0),
+                Vec2::new(0.0, 4.0),
+            ],
+            z_lo: 0.0,
+            z_hi: 3.0,
+        });
+        scene.portals.push(PortalShape {
+            index: 0,
+            room_from: 1,
+            room_to: 2,
+            corners: vec![
+                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::new(f32::INFINITY, 1.0, 1.0),
+                Vec3::new(3.0, 3.0, 2.0),
+            ],
+        });
+        scene.navmesh.push(NavShape {
+            vertices: vec![
+                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::new(3.0, 1.0, 1.0),
+                Vec3::new(3.0, f32::NAN, 1.0),
+            ],
+            class: NavClass::Interior,
+        });
+
+        let (svg, report) = plan_svg(&scene, &PlanOptions::default()).expect("a plan");
+        assert!(!svg.contains("NaN") && !svg.contains("inf"), "non-finite coordinates reached the markup");
+        let count = |l: Layer| report.drawn.iter().find(|(k, _)| *k == l).map(|(_, n)| *n);
+        assert_eq!(count(Layer::Rooms), Some(1), "the broken room is still counted");
+        assert_eq!(count(Layer::Portals), Some(0));
+        assert_eq!(count(Layer::Navmesh), Some(0));
     }
 
     #[test]
