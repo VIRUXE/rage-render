@@ -125,7 +125,8 @@ fn grow(bb: &mut Option<[f32; 4]>, x: f32, y: f32) {
     }
 }
 
-fn in_band(z: f32, band: Option<(f32, f32)>) -> bool {
+/// Is `z` inside the band? Everything is, when there is no band.
+pub(crate) fn in_band(z: f32, band: Option<(f32, f32)>) -> bool {
     match band {
         Some((lo, hi)) => z >= lo && z <= hi,
         None => true,
@@ -249,6 +250,15 @@ mod tests {
             z_lo,
             z_hi,
         }
+    }
+
+    #[test]
+    fn footprints_are_the_mapped_bottom_corners() {
+        // A metre up and mirrored in x, as an MLO placement would.
+        let f = quad_footprint(Vec3::new(0.0, 0.0, 2.0), Vec3::new(4.0, 3.0, 5.0), |v| {
+            Vec3::new(-v.x, v.y, v.z + 1.0)
+        });
+        assert_eq!(f, [Vec2::new(0.0, 0.0), Vec2::new(-4.0, 0.0), Vec2::new(-4.0, 3.0), Vec2::new(0.0, 3.0)]);
     }
 
     #[test]

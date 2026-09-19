@@ -97,7 +97,7 @@ pub(crate) fn portals(scene: &Scene, prep: &Prepared, opts: &PlanOptions, canvas
     let t = &prep.layout.transform;
     for portal in prep.portals.iter().map(|i| &scene.portals[*i]) {
         let pts = to_px(&portal.corners, t);
-        if pts.len() < 2 {
+        if pts.len() < 3 {
             continue;
         }
         let limbo = portal.room_from == 0 || portal.room_to == 0;

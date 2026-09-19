@@ -122,7 +122,7 @@ impl Canvas for RasterCanvas {
     }
 
     fn stroke_polygon(&mut self, pts: &[(f32, f32)], stroke: Rgba8, width: f32, dash: Option<(f32, f32)>) {
-        if pts.len() < 2 {
+        if pts.len() < 3 {
             return;
         }
         let mut phase = 0.0;

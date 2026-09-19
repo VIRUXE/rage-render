@@ -20,6 +20,7 @@ use image::RgbaImage;
 use rage_formats::{Vec2, Vec3};
 
 use canvas::{Canvas, TextSize};
+use geometry::in_band;
 use cartography::{LabelRequest, Layout, LegendRow};
 use palette::{Facing, Mesh};
 use raster::RasterCanvas;
@@ -222,13 +223,6 @@ pub(crate) struct Prepared {
     pub(crate) counts: Vec<(Layer, usize)>,
     /// Entity set indices present among the drawn entities, ascending.
     pub(crate) sets: Vec<usize>,
-}
-
-fn in_band(z: f32, band: Option<(f32, f32)>) -> bool {
-    match band {
-        Some((lo, hi)) => z >= lo && z <= hi,
-        None => true,
-    }
 }
 
 /// The z-facing of a triangle, from its normal.
