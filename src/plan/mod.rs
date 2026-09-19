@@ -387,10 +387,10 @@ fn legend_rows(scene: &Scene, prep: &Prepared) -> Vec<LegendRow> {
     rows
 }
 
-/// Draws the whole plan onto `canvas`, which must be the size the returned
-/// [`PlanReport`] states.
-fn draw(scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canvas) -> anyhow::Result<PlanReport> {
-    let prep = prepare(scene, opts)?;
+/// Draws the whole plan onto `canvas`, which must be the size `prep`'s
+/// layout states. `prep` is passed in rather than computed here so that
+/// `plan_png`, which has to size its image up front, prepares only once.
+fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canvas) -> PlanReport {
     let l = prep.layout;
     let mut warnings = Vec::new();
 
@@ -431,21 +431,23 @@ fn draw(scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canvas) -> anyhow::R
         canvas.text(l.map.x, y, line, TextSize::Small, palette::AXIS_TEXT, false);
     }
 
-    Ok(PlanReport { width: l.width, height: l.height, region: prep.region, drawn: prep.counts, warnings })
+    PlanReport { width: l.width, height: l.height, region: prep.region, drawn: prep.counts, warnings }
 }
 
 /// Draws the plan as an image.
 pub fn plan_png(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<(RgbaImage, PlanReport)> {
-    let size = prepare(scene, opts)?.layout;
+    let prep = prepare(scene, opts)?;
+    let size = prep.layout;
     let mut canvas = RasterCanvas::new(size.width, size.height, palette::BACKGROUND);
-    let report = draw(scene, opts, &mut canvas)?;
+    let report = draw(prep, scene, opts, &mut canvas);
     Ok((canvas.img, report))
 }
 
 /// Draws the plan as a hybrid SVG: vector page, mesh underlay as one PNG.
 pub fn plan_svg(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<(String, PlanReport)> {
+    let prep = prepare(scene, opts)?;
     let mut canvas = SvgCanvas::new();
-    let report = draw(scene, opts, &mut canvas)?;
+    let report = draw(prep, scene, opts, &mut canvas);
     Ok((canvas.finish(report.width, report.height), report))
 }
 
@@ -539,6 +541,27 @@ mod tests {
         assert!(svg.contains("<polygon"), "the room is missing");
         assert!(svg.contains("one line"), "the caption is missing");
         assert!(svg.ends_with("</svg>\n"));
+    }
+
+    #[test]
+    fn portal_labels_are_ascii_so_the_bitmap_font_can_draw_them() {
+        let mut scene = room_scene();
+        scene.portals.push(PortalShape {
+            index: 4,
+            room_from: 3,
+            room_to: 7,
+            corners: vec![
+                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::new(3.0, 1.0, 1.0),
+                Vec3::new(3.0, 3.0, 2.0),
+                Vec3::new(1.0, 3.0, 2.0),
+            ],
+        });
+        let opts = PlanOptions { labels: true, ..Default::default() };
+        let (svg, _) = plan_svg(&scene, &opts).expect("a plan");
+        // `>` is escaped in XML text, so the markup carries the entity form.
+        assert!(svg.contains("P4 3-&gt;7"), "portal label is missing or not ASCII");
+        assert!(!svg.contains('\u{2192}'), "a glyph the 5x7 font cannot draw");
     }
 
     #[test]

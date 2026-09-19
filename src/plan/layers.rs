@@ -111,7 +111,7 @@ pub(crate) fn portals(scene: &Scene, prep: &Prepared, opts: &PlanOptions, canvas
             let cy = pts.iter().map(|p| p.1).sum::<f32>() / pts.len() as f32;
             labels.push(LabelRequest {
                 anchor: (cx, cy),
-                text: format!("P{} {}\u{2192}{}", portal.index, portal.room_from, portal.room_to),
+                text: format!("P{} {}->{}", portal.index, portal.room_from, portal.room_to),
                 size: TextSize::Small,
                 color: palette::PORTAL_STROKE,
                 priority: 2,
