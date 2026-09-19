@@ -62,7 +62,7 @@ pub fn clip_tri_to_band(t: &Tri, lo: f32, hi: f32) -> Option<Vec<Vec3>> {
 
 /// The four bottom corners of an axis-aligned box, run through `map` and
 /// flattened to XY — a room's footprint in world space.
-pub(crate) fn quad_footprint(bb_min: Vec3, bb_max: Vec3, map: impl Fn(Vec3) -> Vec3) -> [Vec2; 4] {
+pub fn quad_footprint(bb_min: Vec3, bb_max: Vec3, map: impl Fn(Vec3) -> Vec3) -> [Vec2; 4] {
     let z = bb_min.z;
     let corners = [
         Vec3::new(bb_min.x, bb_min.y, z),

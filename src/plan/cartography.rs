@@ -1,7 +1,8 @@
 //! The map furniture: page layout, round grid steps, scale bars and the
 //! greedy label placer.
 
-use super::canvas::{Rgba8, TextSize};
+use super::canvas::{Canvas, Rgba8, TextSize};
+use super::palette;
 use super::geometry::Transform;
 
 /// Round world-space steps a grid or scale bar may use.
@@ -165,6 +166,102 @@ pub(crate) fn place_labels(
         }
     }
     (placed, dropped)
+}
+
+/// One legend entry: a colour swatch and its caption.
+pub(crate) struct LegendRow {
+    pub(crate) swatch: Rgba8,
+    pub(crate) text: String,
+}
+
+/// The minor/major grid, drawn under everything else.
+pub(crate) fn draw_grid(canvas: &mut dyn Canvas, l: &Layout, region: [f32; 4]) {
+    let step = nice_step(l.transform.scale, MIN_GRID_GAP);
+    let (map, t) = (l.map, l.transform);
+
+    let mut k = (region[0] / step).ceil() as i64;
+    while (k as f32) * step <= region[2] + 1e-4 {
+        let x = t.to_px(k as f32 * step, region[3]).0;
+        let colour = if k % 5 == 0 { palette::GRID_MAJOR } else { palette::GRID_MINOR };
+        canvas.line((x, map.y), (x, map.y + map.h), colour, 1.0, None);
+        k += 1;
+    }
+    let mut k = (region[1] / step).ceil() as i64;
+    while (k as f32) * step <= region[3] + 1e-4 {
+        let y = t.to_px(region[0], k as f32 * step).1;
+        let colour = if k % 5 == 0 { palette::GRID_MAJOR } else { palette::GRID_MINOR };
+        canvas.line((map.x, y), (map.x + map.w, y), colour, 1.0, None);
+        k += 1;
+    }
+}
+
+/// Formats a world coordinate for a tick label.
+fn tick_text(v: f32) -> String {
+    if (v - v.round()).abs() < 0.05 {
+        format!("{}", v.round() as i64)
+    } else {
+        format!("{v:.1}")
+    }
+}
+
+/// The map border and the world-coordinate ticks on the left and bottom axes.
+pub(crate) fn draw_axes(canvas: &mut dyn Canvas, l: &Layout, region: [f32; 4]) {
+    let step = nice_step(l.transform.scale, MIN_GRID_GAP) * 5.0;
+    let (map, t) = (l.map, l.transform);
+    canvas.rect(map.x, map.y, map.w, map.h, None, Some(palette::AXIS_TEXT));
+
+    let mut k = (region[0] / step).ceil() as i64;
+    while (k as f32) * step <= region[2] + 1e-4 {
+        let world = k as f32 * step;
+        let x = t.to_px(world, region[3]).0;
+        canvas.line((x, map.y + map.h), (x, map.y + map.h + 4.0), palette::AXIS_TEXT, 1.0, None);
+        let text = tick_text(world);
+        let w = canvas.text_width(&text, TextSize::Small);
+        canvas.text(x - w / 2.0, map.y + map.h + 7.0, &text, TextSize::Small, palette::AXIS_TEXT, false);
+        k += 1;
+    }
+    let mut k = (region[1] / step).ceil() as i64;
+    while (k as f32) * step <= region[3] + 1e-4 {
+        let world = k as f32 * step;
+        let y = t.to_px(region[0], world).1;
+        canvas.line((map.x - 4.0, y), (map.x, y), palette::AXIS_TEXT, 1.0, None);
+        let text = tick_text(world);
+        let w = canvas.text_width(&text, TextSize::Small);
+        canvas.text(map.x - 7.0 - w, y - TextSize::Small.height() / 2.0, &text, TextSize::Small, palette::AXIS_TEXT, false);
+        k += 1;
+    }
+}
+
+/// The scale bar, bottom-left inside the map area.
+pub(crate) fn draw_scale_bar(canvas: &mut dyn Canvas, l: &Layout) {
+    let map = l.map;
+    let metres = scale_bar_metres(map.w / l.transform.scale);
+    let bar = metres * l.transform.scale;
+    let (x, y, h) = (map.x + 10.0, map.y + map.h - 20.0, 6.0);
+    let seg = bar / 4.0;
+    for i in 0..4 {
+        let fill = if i % 2 == 0 { palette::INK } else { palette::BACKGROUND };
+        canvas.rect(x + i as f32 * seg, y, seg, h, Some(fill), Some(palette::INK));
+    }
+    canvas.text(x, y - TextSize::Small.height() - 3.0, &format!("{} m", tick_text(metres)), TextSize::Small, palette::INK, true);
+}
+
+/// The north arrow, top-right inside the map area. World +Y is up on the page.
+pub(crate) fn draw_north_arrow(canvas: &mut dyn Canvas, l: &Layout) {
+    let map = l.map;
+    let (cx, cy) = (map.x + map.w - 18.0, map.y + 16.0);
+    canvas.fill_polygon(&[(cx, cy - 10.0), (cx - 6.0, cy + 8.0), (cx, cy + 4.0), (cx + 6.0, cy + 8.0)], palette::INK);
+    let w = canvas.text_width("N", TextSize::Small);
+    canvas.text(cx - w / 2.0, cy + 11.0, "N", TextSize::Small, palette::INK, true);
+}
+
+/// The legend column, one row per drawn layer and entity set.
+pub(crate) fn draw_legend(canvas: &mut dyn Canvas, l: &Layout, rows: &[LegendRow]) {
+    for (i, row) in rows.iter().enumerate() {
+        let y = l.map.y + i as f32 * LEGEND_ROW_H;
+        canvas.rect(l.legend_x, y + 1.0, 12.0, 12.0, Some(row.swatch), Some(palette::AXIS_TEXT));
+        canvas.text(l.legend_x + 18.0, y + 4.0, &row.text, TextSize::Small, palette::INK, false);
+    }
 }
 
 #[cfg(test)]

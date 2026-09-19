@@ -40,6 +40,36 @@ drawables into one image, which is how a vehicle's body and wheels become
 one picture. `compose_sheet` tiles labelled images into a grid, and
 `draw_text` puts a 5x7 bitmap font on any image without a font file.
 
+### Plans
+
+`plan_png` and `plan_svg` draw a GTA V interior from above as a floor plan:
+rooms and portals, entity dots, the collision and drawable meshes as a
+shaded underlay, and the navmesh, on a page with a grid, axes, a scale bar, a
+north arrow and a legend.
+
+```rust
+use rage_render::{plan_svg, Layer, PlanOptions, Scene, FLOOR_BAND};
+
+let mut scene = Scene { title: "v_kitchen".into(), ..Default::default() };
+// fill scene.rooms / portals / entities / collision / navmesh from parsed files
+
+let options = PlanOptions {
+    scale: 30.0,                                    // pixels per metre
+    z_band: Some((1.0 + FLOOR_BAND.0, 1.0 + FLOOR_BAND.1)), // one storey
+    layers: vec![Layer::Rooms, Layer::Portals, Layer::Collision],
+    labels: true,
+    ..Default::default()
+};
+let (svg, report) = plan_svg(&scene, &options)?;
+println!("{}x{} px, region {:?}", report.width, report.height, report.region);
+```
+
+The SVG is hybrid: the triangle meshes are rasterised into one embedded PNG,
+everything else stays vector. `plan_png` draws the same page into an
+`RgbaImage`. A z band keeps one storey of a stacked interior readable —
+`rooms_stacked` finds the rooms that need one — and `clip_tri_to_band` is
+what trims the meshes to it.
+
 ## Examples
 
 ### Render a drawable
@@ -131,6 +161,14 @@ src/
   render/mesh.rs     drawable geometry -> prepared triangles with blend mode per geometry
   render/raster.rs   the triangle rasteriser, depth buffer, alpha test and blending
   render/textures.rs texture lookup through the layered TextureSet
+  plan/mod.rs        Scene / PlanOptions / PlanReport, plan_png and plan_svg
+  plan/layers.rs     drawing the mesh underlay, navmesh, rooms, portals, entities, markers
+  plan/cartography.rs page layout, grid steps, scale bar, legend, label placement
+  plan/geometry.rs   world -> page transform, z-band clipping, scene bounds
+  plan/canvas.rs     the Canvas trait both plan backends implement
+  plan/raster.rs     the pixel backend
+  plan/svg.rs        the SVG backend, with base64 for the embedded underlay
+  plan/palette.rs    every colour the plan uses
   sheet.rs           contact sheets
   font.rs            5x7 bitmap font
   wasm.rs            glTF export and the wasm entry point
