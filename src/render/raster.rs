@@ -2,10 +2,10 @@
 
 use image::{Rgba, RgbaImage};
 
-use crate::math::{Mat4, Vec2, Vec3};
+use rage_formats::math::{Mat4, Vec2, Vec3};
 use crate::render::mesh::{BlendMode, PreparedGeometry};
 use crate::render::RenderOptions;
-use crate::ydd::UnifiedVertex;
+use rage_formats::ydd::UnifiedVertex;
 
 /// Colour used where a geometry has no diffuse texture.
 const FLAT_GREY: [u8; 4] = [153, 153, 153, 255];
@@ -403,11 +403,11 @@ fn sample_bilinear(image: &RgbaImage, uv: Vec2) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::{Mat4, Vec2, Vec3};
+    use rage_formats::math::{Mat4, Vec2, Vec3};
     use crate::render::camera::camera_for;
     use crate::render::mesh::{BlendMode, PreparedGeometry};
     use crate::render::{RenderOptions, View};
-    use crate::ydd::{DrawableBounds, UnifiedVertex};
+    use rage_formats::ydd::{DrawableBounds, UnifiedVertex};
     use image::RgbaImage;
 
     const BACKGROUND: [u8; 4] = [230, 230, 230, 255];
@@ -420,8 +420,8 @@ mod tests {
             color1: [255, 255, 255, 255],
             texcoord0: uv,
             texcoord1: Vec2::new(0.0, 0.0),
-            tangent: crate::math::Vec4::new(1.0, 0.0, 0.0, 1.0),
-            blend_weights: crate::math::Vec4::new(0.0, 0.0, 0.0, 0.0),
+            tangent: rage_formats::math::Vec4::new(1.0, 0.0, 0.0, 1.0),
+            blend_weights: rage_formats::math::Vec4::new(0.0, 0.0, 0.0, 0.0),
             blend_indices: [0; 4],
         }
     }

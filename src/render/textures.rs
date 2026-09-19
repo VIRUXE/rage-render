@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use image::RgbaImage;
 
-use crate::texture_utils::to_rgba_image;
-use crate::writer::rage_joaat;
-use crate::ytd::YtdTexture;
+use rage_formats::texture_utils::to_rgba_image;
+use rage_formats::rage_joaat;
+use rage_formats::ytd::YtdTexture;
 
 /// Decoded textures, in priority layers: a name is resolved against layer 0
 /// first, then layer 1, and so on. That lets an embedded texture dictionary

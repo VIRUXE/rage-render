@@ -9,8 +9,8 @@
 //! touching what gets drawn — stray islands stay in the draw list, they are
 //! simply left out of the frame.
 
-use crate::math::Vec3;
-use crate::ydd::DrawableBounds;
+use rage_formats::math::Vec3;
+use rage_formats::ydd::DrawableBounds;
 
 use super::camera::fit_radius;
 use super::mesh::PreparedGeometry;

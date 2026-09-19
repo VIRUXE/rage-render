@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
-use crate::ydd::{parse_drawables, DrawableEntry, DrawableKind};
-use crate::ytd::{parse_ytd, YtdTexture};
+use rage_formats::ydd::{parse_drawables, DrawableEntry, DrawableKind};
+use rage_formats::ytd::{parse_ytd, YtdTexture};
 use anyhow::Result;
 
 #[wasm_bindgen]
@@ -148,8 +148,8 @@ fn texture_json(texture: &YtdTexture) -> json::JsonValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::archive::RSC7_MAGIC;
-    use crate::ydd::tests::minimal_ydr_sections;
+    use rage_formats::RSC7_MAGIC;
+    use rage_formats::ydd::tests::minimal_ydr_sections;
     use flate2::write::DeflateEncoder;
     use flate2::Compression;
     use std::io::Write;
@@ -222,7 +222,7 @@ mod tests {
     /// only parses as a single drawable.
     fn ydr_rejected_as_dictionary() -> Vec<u8> {
         let (mut system, graphics) = minimal_ydr_sections(false);
-        let nowhere = crate::resource::SYSTEM_BASE + 0x10_0000;
+        let nowhere = rage_formats::resource::SYSTEM_BASE + 0x10_0000;
         system[0x30..0x38].copy_from_slice(&nowhere.to_le_bytes());
         system[0x38..0x3A].copy_from_slice(&1u16.to_le_bytes());
         system[0x3A..0x3C].copy_from_slice(&1u16.to_le_bytes());

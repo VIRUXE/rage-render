@@ -1,8 +1,8 @@
 //! Camera placement: fits a drawable's bounds into one of the fixed views.
 
-use crate::math::{Mat4, Vec3};
+use rage_formats::math::{Mat4, Vec3};
 use crate::render::View;
-use crate::ydd::DrawableBounds;
+use rage_formats::ydd::DrawableBounds;
 
 /// Direction the light travels *toward* — i.e. the vector used in `dot(n, l)`.
 const LIGHT_DIR: Vec3 = Vec3 { x: 0.4, y: -0.6, z: 0.8 };
@@ -68,7 +68,7 @@ pub(crate) fn camera_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::Vec4;
+    use rage_formats::math::Vec4;
 
     fn bounds() -> DrawableBounds {
         DrawableBounds {

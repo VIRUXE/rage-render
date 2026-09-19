@@ -3,9 +3,9 @@
 
 use image::RgbaImage;
 
-use crate::math::Mat4;
+use rage_formats::math::Mat4;
 use crate::render::{RenderReport, TextureSet};
-use crate::ydd::{Drawable, DrawableLod, UnifiedVertex, VertexSemantic};
+use rage_formats::ydd::{Drawable, DrawableLod, UnifiedVertex, VertexSemantic};
 
 /// How a geometry's diffuse alpha is applied, taken from the RAGE render
 /// bucket its shader is assigned to.
@@ -158,8 +158,8 @@ pub(crate) fn prepare<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::{Mat4, Vec2, Vec3};
-    use crate::ydd::{
+    use rage_formats::math::{Mat4, Vec2, Vec3};
+    use rage_formats::ydd::{
         DrawableBounds, DrawableGeometry, DrawableLod, DrawableModel, IndexBuffer, LodLevel,
         VertexBuffer, VertexBufferLayout, VertexComponent, VertexComponentType, VertexDeclaration,
         VertexSemantic,

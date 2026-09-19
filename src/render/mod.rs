@@ -11,8 +11,8 @@ mod textures;
 use anyhow::Result;
 use image::RgbaImage;
 
-use crate::math::Mat4;
-use crate::ydd::{Drawable, LodLevel};
+use rage_formats::math::Mat4;
+use rage_formats::ydd::{Drawable, LodLevel};
 use raster::Framebuffer;
 
 pub use textures::TextureSet;
@@ -158,7 +158,7 @@ pub struct RenderReport {
 /// One drawable in a composite render, with where to put it.
 ///
 /// A fragment's wheels and doors are separate drawables placed on the body
-/// by their physics transforms; `crate::yft::Fragment::render_parts` builds
+/// by their physics transforms; `rage_formats::yft::Fragment::render_parts` builds
 /// these. A plain drawable is a single part at the identity.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderPart<'a> {
@@ -176,8 +176,8 @@ impl<'a> RenderPart<'a> {
     }
 }
 
-impl<'a> From<crate::yft::FragmentPart<'a>> for RenderPart<'a> {
-    fn from(part: crate::yft::FragmentPart<'a>) -> Self {
+impl<'a> From<rage_formats::yft::FragmentPart<'a>> for RenderPart<'a> {
+    fn from(part: rage_formats::yft::FragmentPart<'a>) -> Self {
         Self { drawable: part.drawable, transform: part.transform, bone_transforms: part.bone_transforms }
     }
 }
@@ -336,9 +336,9 @@ pub fn render_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::{Mat4, Vec2, Vec3};
-    use crate::writer::rage_joaat;
-    use crate::ydd::{
+    use rage_formats::math::{Mat4, Vec2, Vec3};
+    use rage_formats::rage_joaat;
+    use rage_formats::ydd::{
         Drawable, DrawableBounds, DrawableGeometry, DrawableLod, DrawableModel, IndexBuffer,
         LodLevel, ShaderFx, ShaderGroup, ShaderParameter, ShaderParameterValue, VertexBuffer,
         VertexBufferLayout, VertexComponent, VertexComponentType, VertexDeclaration,
@@ -444,14 +444,14 @@ mod tests {
         ShaderGroup { textures: Vec::new(), shaders: vec![shader(texture_name, 0)] }
     }
 
-    fn solid_texture(name: &str, rgba: [u8; 4]) -> crate::ytd::YtdTexture {
-        crate::ytd::YtdTexture {
+    fn solid_texture(name: &str, rgba: [u8; 4]) -> rage_formats::ytd::YtdTexture {
+        rage_formats::ytd::YtdTexture {
             name: name.to_string(),
             name_hash: rage_joaat(&name.to_lowercase()),
             width: 1,
             height: 1,
             depth: 1,
-            format: crate::ytd::TextureFormat::A8B8G8R8,
+            format: rage_formats::ytd::TextureFormat::A8B8G8R8,
             levels: 1,
             stride: 4,
             pixel_data: rgba.to_vec(),
@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn texture_set_lookup_is_case_insensitive_and_layered() {
-        use crate::ytd::{TextureFormat, YtdTexture};
+        use rage_formats::ytd::{TextureFormat, YtdTexture};
 
         let texture = |name: &str, rgba: [u8; 4]| YtdTexture {
             name: name.to_string(),
@@ -1023,7 +1023,7 @@ mod tests {
 
     #[test]
     fn undecodable_texture_is_reported_by_push_layer() {
-        use crate::ytd::{TextureFormat, YtdTexture};
+        use rage_formats::ytd::{TextureFormat, YtdTexture};
 
         let broken = YtdTexture {
             name: "broken".to_string(),
