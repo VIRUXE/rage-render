@@ -1,7 +1,7 @@
 //! The map furniture: page layout, round grid steps, scale bars and the
 //! greedy label placer.
 
-use super::canvas::{Canvas, Rgba8, TextSize};
+use super::canvas::{measure, Canvas, Rgba8, TextSize};
 use super::palette;
 use super::geometry::Transform;
 
@@ -168,6 +168,31 @@ pub(crate) fn place_labels(
     (placed, dropped)
 }
 
+/// The largest size at or below `largest` that fits `s` into `width`, with
+/// the text cut short when even the smallest does not. A title longer than
+/// its page used to run off the edge.
+pub(crate) fn fit_text(s: &str, width: f32, largest: TextSize) -> (TextSize, String) {
+    let mut chosen = largest;
+    for size in [TextSize::Title, TextSize::Body, TextSize::Small] {
+        if size.scale() > largest.scale() {
+            continue;
+        }
+        chosen = size;
+        if measure(s, size) <= width {
+            return (size, s.to_string());
+        }
+    }
+    // Every glyph advances the same, so the character count follows directly.
+    let scale = chosen.scale() as f32;
+    let fits = ((width + scale) / ((crate::font::GLYPH_W + 1) as f32 * scale)).floor().max(0.0) as usize;
+    let text = if fits <= 2 {
+        s.chars().take(fits).collect()
+    } else {
+        s.chars().take(fits - 2).chain("..".chars()).collect()
+    };
+    (chosen, text)
+}
+
 /// One legend entry: a colour swatch and its caption.
 pub(crate) struct LegendRow {
     pub(crate) swatch: Rgba8,
@@ -313,6 +338,23 @@ mod tests {
         assert!((1..=300).contains(&axis_lines(1e9, 1e9 + 500.0, 2.0, 300.0).len()));
         assert!(axis_lines(0.0, 10.0, 0.0, 300.0).is_empty());
         assert!(axis_lines(f32::NAN, 10.0, 2.0, 300.0).is_empty());
+    }
+
+    #[test]
+    fn a_title_too_wide_for_its_page_is_cut_down() {
+        let (size, text) = fit_text("v_cafe", 400.0, TextSize::Title);
+        assert_eq!((size, text.as_str()), (TextSize::Title, "v_cafe"));
+
+        // Too wide for Title, fits at Body.
+        let long = "navmesh[108][96].ynv - all heights";
+        let (size, text) = fit_text(long, measure(long, TextSize::Body), TextSize::Title);
+        assert_eq!((size, text.as_str()), (TextSize::Body, long));
+
+        // Too wide even at Small: cut short, and it fits what is left.
+        let (size, text) = fit_text(long, 60.0, TextSize::Title);
+        assert_eq!(size, TextSize::Small);
+        assert!(text.ends_with(".."), "{text}");
+        assert!(measure(&text, TextSize::Small) <= 60.0);
     }
 
     #[test]

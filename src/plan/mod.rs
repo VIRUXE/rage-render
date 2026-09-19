@@ -143,6 +143,9 @@ pub struct Marker {
 /// Everything the plan can draw, in world space.
 #[derive(Debug, Clone, Default)]
 pub struct Scene {
+    /// The heading drawn at the top of the page. Plain ASCII reads best: the
+    /// bitmap font `plan_png` draws with covers printable ASCII, and anything
+    /// else is folded to the nearest character it can draw.
     pub title: String,
     pub caption: Vec<String>,
     pub rooms: Vec<RoomShape>,
@@ -408,6 +411,11 @@ fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canv
     let mut warnings = Vec::new();
 
     canvas.rect(0.0, 0.0, l.width as f32, l.height as f32, Some(palette::BACKGROUND), None);
+
+    // Everything in map space is clipped to the map area: a navmesh polygon
+    // or a room that reaches past the region must not run over the axes, the
+    // legend or the edge of the page.
+    canvas.clip(Some((l.map.x, l.map.y, l.map.w, l.map.h)));
     cartography::draw_grid(canvas, &l, prep.region);
 
     if let Some(underlay) = layers::mesh_underlay(&prep) {
@@ -430,6 +438,7 @@ fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canv
     if dropped > 0 {
         warnings.push(format!("{dropped} labels hidden to avoid overlap"));
     }
+    canvas.clip(None);
 
     cartography::draw_axes(canvas, &l, prep.region);
     cartography::draw_scale_bar(canvas, &l);
@@ -437,7 +446,9 @@ fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canv
     cartography::draw_legend(canvas, &l, &legend_rows(scene, &prep));
 
     if !scene.title.is_empty() {
-        canvas.text(cartography::MARGIN, cartography::MARGIN, &scene.title, TextSize::Title, palette::INK, false);
+        let width = l.width as f32 - 2.0 * cartography::MARGIN;
+        let (size, title) = cartography::fit_text(&scene.title, width, TextSize::Title);
+        canvas.text(cartography::MARGIN, cartography::MARGIN, &title, size, palette::INK, false);
     }
     for (i, line) in scene.caption.iter().enumerate() {
         let y = l.caption_y + i as f32 * cartography::CAPTION_LINE_H;
@@ -575,6 +586,92 @@ mod tests {
         // `>` is escaped in XML text, so the markup carries the entity form.
         assert!(svg.contains("P4 3-&gt;7"), "portal label is missing or not ASCII");
         assert!(!svg.contains('\u{2192}'), "a glyph the 5x7 font cannot draw");
+    }
+
+    /// A rectangle in world space, as a navmesh polygon.
+    fn nav_rect(x0: f32, y0: f32, x1: f32, y1: f32, class: NavClass) -> NavShape {
+        NavShape {
+            vertices: vec![
+                Vec3::new(x0, y0, 1.0),
+                Vec3::new(x1, y0, 1.0),
+                Vec3::new(x1, y1, 1.0),
+                Vec3::new(x0, y1, 1.0),
+            ],
+            class,
+        }
+    }
+
+    #[test]
+    fn map_content_is_clipped_to_the_map_area() {
+        // An exterior polygon sprawling far past the region: its outline must
+        // stop at the map rect instead of crossing the axes and the legend.
+        let mut scene = nav_scene();
+        scene.caption.clear();
+        scene.navmesh.push(nav_rect(-400.0, -400.0, 400.0, 400.0, NavClass::Exterior));
+        let opts = PlanOptions { region: Some([0.0, 0.0, 6.0, 4.0]), scale: 20.0, ..Default::default() };
+        let (img, report) = plan_png(&scene, &opts).expect("a plan");
+
+        let rows = report.drawn.iter().filter(|(_, n)| *n > 0).count();
+        let map = cartography::layout(report.region, 20.0, rows, 0).map;
+        let (x0, y0) = (map.x.round() as u32, map.y.round() as u32);
+        let (x1, y1) = ((map.x + map.w).round() as u32, (map.y + map.h).round() as u32);
+        for (x, y, p) in img.enumerate_pixels() {
+            let inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+            assert!(
+                inside || p.0 != palette::NAV_EXTERIOR_STROKE,
+                "navmesh ink at ({x}, {y}), outside the map rect"
+            );
+        }
+
+        let (svg, _) = plan_svg(&scene, &opts).expect("a plan");
+        assert!(svg.contains("<clipPath id=\"plan-map\">"), "no clip path");
+        assert!(svg.contains("<g clip-path=\"url(#plan-map)\">"), "the map content is not clipped");
+        assert_eq!(svg.matches("</g>").count(), 1, "the clip group is left open or closed twice");
+    }
+
+    #[test]
+    fn a_title_the_font_cannot_draw_is_folded() {
+        let mut scene = room_scene();
+        scene.title = "navmesh[108][96].ynv \u{2014} all heights".into();
+        let (svg, _) = plan_svg(&scene, &PlanOptions::default()).expect("a plan");
+        assert!(svg.contains("navmesh[108][96].ynv - all heights"), "the em dash was not folded");
+        assert!(!svg.contains('\u{2014}'));
+    }
+
+    #[test]
+    fn the_default_region_ignores_sprawling_exterior_navmesh() {
+        let scene = Scene {
+            navmesh: vec![
+                nav_rect(0.0, 0.0, 6.0, 4.0, NavClass::Interior),
+                nav_rect(-500.0, -500.0, 500.0, 500.0, NavClass::Exterior),
+            ],
+            ..Default::default()
+        };
+        let (_, report) = plan_png(&scene, &PlanOptions::default()).expect("a plan");
+        assert_eq!(report.region, [-2.0, -2.0, 8.0, 6.0], "framed the exterior sprawl");
+    }
+
+    #[test]
+    fn exterior_navmesh_frames_the_page_when_it_is_all_there_is() {
+        let scene = Scene { navmesh: vec![nav_rect(0.0, 0.0, 6.0, 4.0, NavClass::Exterior)], ..Default::default() };
+        let (_, report) = plan_png(&scene, &PlanOptions::default()).expect("a plan");
+        assert_eq!(report.region, [-2.0, -2.0, 8.0, 6.0]);
+    }
+
+    #[test]
+    fn a_title_wider_than_the_page_is_cut_to_fit() {
+        let mut scene = room_scene();
+        scene.title = "v_office ".repeat(40);
+        let (svg, report) = plan_svg(&scene, &PlanOptions::default()).expect("a plan");
+        assert!(svg.contains("..</text>"), "the title was not cut short");
+        let drawn = svg.split("<text").nth(1).expect("a title");
+        let length: f32 = drawn
+            .split("textLength=\"")
+            .nth(1)
+            .and_then(|t| t.split('"').next())
+            .and_then(|t| t.parse().ok())
+            .expect("a measured title");
+        assert!(length <= report.width as f32 - 16.0, "the title is {length} px on a {} px page", report.width);
     }
 
     #[test]

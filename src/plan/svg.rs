@@ -6,20 +6,34 @@
 
 use image::RgbaImage;
 
-use super::canvas::{measure, Canvas, Rgba8, TextSize};
+use super::canvas::{drawable_text, measure, Canvas, Rgba8, TextSize};
+
+/// The id of the one clip path the page uses.
+const CLIP_ID: &str = "plan-map";
 
 /// A [`Canvas`] that appends SVG elements to a document body.
 pub(crate) struct SvgCanvas {
     body: String,
+    /// Whether a `<g clip-path=…>` is currently open.
+    clipped: bool,
 }
 
 impl SvgCanvas {
     pub(crate) fn new() -> Self {
-        Self { body: String::new() }
+        Self { body: String::new(), clipped: false }
+    }
+
+    /// Closes the clip group, if one is open.
+    fn close_clip(&mut self) {
+        if self.clipped {
+            self.push("</g>");
+            self.clipped = false;
+        }
     }
 
     /// Wraps everything drawn so far in an `<svg>` root of `width` x `height`.
-    pub(crate) fn finish(self, width: u32, height: u32) -> String {
+    pub(crate) fn finish(mut self, width: u32, height: u32) -> String {
+        self.close_clip();
         format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" \
              viewBox=\"0 0 {width} {height}\">\n{}</svg>\n",
@@ -182,13 +196,25 @@ impl Canvas for SvgCanvas {
             crate::font::GLYPH_H * size.scale(),
             measure(s, size),
             paint("fill", color),
-            escape(s)
+            escape(&drawable_text(s))
         );
         self.push(&el);
     }
 
     fn text_width(&self, s: &str, size: TextSize) -> f32 {
         measure(s, size)
+    }
+
+    fn clip(&mut self, rect: Option<(f32, f32, f32, f32)>) {
+        self.close_clip();
+        if let Some((x, y, w, h)) = rect {
+            let el = format!(
+                "<clipPath id=\"{CLIP_ID}\"><rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{w:.2}\" height=\"{h:.2}\"/></clipPath>"
+            );
+            self.push(&el);
+            self.push(&format!("<g clip-path=\"url(#{CLIP_ID})\">"));
+            self.clipped = true;
+        }
     }
 
     fn image(&mut self, x: f32, y: f32, img: &RgbaImage) {

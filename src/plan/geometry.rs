@@ -3,7 +3,7 @@
 
 use rage_formats::{Vec2, Vec3};
 
-use super::{Layer, RoomShape, Scene, Tri};
+use super::{Layer, NavClass, RoomShape, Scene, Tri};
 
 /// Maps world XY to page pixels: `+Y` is up on the page, so world y is flipped.
 #[derive(Debug, Clone, Copy)]
@@ -140,8 +140,18 @@ pub(crate) fn in_band(z: f32, band: Option<(f32, f32)>) -> bool {
     }
 }
 
-/// World-space `x0,y0,x1,y1` covering every enabled layer within the band.
+/// World-space `x0,y0,x1,y1` framing what is worth looking at: the rooms,
+/// portals, entities, meshes, markers and the interior or sunk navmesh of the
+/// enabled layers. Exterior navmesh polygons sprawl across a whole cell and
+/// would shrink an interior to a speck, so they only frame the page when
+/// there is nothing else on it.
 pub(crate) fn scene_bounds(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>) -> Option<[f32; 4]> {
+    bounds_of(scene, layers, band, false).or_else(|| bounds_of(scene, layers, band, true))
+}
+
+/// World-space `x0,y0,x1,y1` covering every enabled layer within the band,
+/// with or without the exterior navmesh.
+fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, exterior_nav: bool) -> Option<[f32; 4]> {
     let mut bb = None;
     for layer in layers {
         match layer {
@@ -195,6 +205,9 @@ pub(crate) fn scene_bounds(scene: &Scene, layers: &[Layer], band: Option<(f32, f
             }
             Layer::Navmesh => {
                 for n in &scene.navmesh {
+                    if n.class == NavClass::Exterior && !exterior_nav {
+                        continue;
+                    }
                     if !n.vertices.iter().any(|v| in_band(v.z, band)) {
                         continue;
                     }
