@@ -112,22 +112,39 @@ pub(crate) struct PlacedLabel {
     pub(crate) color: Rgba8,
 }
 
+/// Why labels went undrawn: the two cases read very differently to someone
+/// looking at the plan, so they are counted apart.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LabelDrops {
+    /// On the map, but every candidate spot was already taken.
+    pub(crate) crowded: usize,
+    /// Anchored outside the map area, so there was never a spot to take.
+    pub(crate) off_map: usize,
+}
+
 /// Places as many labels as fit inside `map` without overlapping, highest
-/// priority first. Returns the placements and how many were dropped.
+/// priority first. Returns the placements and what was dropped, by cause.
 pub(crate) fn place_labels(
     reqs: &mut Vec<LabelRequest>,
     map: Rect,
     measure: impl Fn(&str, TextSize) -> (f32, f32),
-) -> (Vec<PlacedLabel>, usize) {
+) -> (Vec<PlacedLabel>, LabelDrops) {
     const GAP: f32 = 6.0;
     const PAD: f32 = 2.0;
 
     reqs.sort_by_key(|r| r.priority);
     let mut taken: Vec<Rect> = Vec::with_capacity(reqs.len());
     let mut placed = Vec::with_capacity(reqs.len());
-    let mut dropped = 0;
+    let mut drops = LabelDrops::default();
 
     for req in reqs.iter() {
+        // An anchor outside the map can never be placed, and saying it was
+        // hidden to avoid overlap would send the reader looking for a clash
+        // that is not there.
+        if !map.contains(req.anchor.0, req.anchor.1, 0.0, 0.0) {
+            drops.off_map += 1;
+            continue;
+        }
         // The box reserved for a label is its glyph box grown by the halo the
         // backends draw around it (a pixel of outline in the raster, a 3 px
         // stroke in SVG), so that the `PAD` clearance below is on top of the
@@ -172,10 +189,10 @@ pub(crate) fn place_labels(
                     color: req.color,
                 });
             }
-            None => dropped += 1,
+            None => drops.crowded += 1,
         }
     }
-    (placed, dropped)
+    (placed, drops)
 }
 
 /// The largest size at or below `largest` that fits `s` into `width`, with
@@ -453,10 +470,10 @@ mod tests {
             centred_first: false,
         };
         let mut reqs = vec![mk((200.0, 200.0), "one"), mk((220.0, 203.0), "two")];
-        let (placed, dropped) = place_labels(&mut reqs, map, |s, size| {
+        let (placed, drops) = place_labels(&mut reqs, map, |s, size| {
             (super::super::canvas::measure(s, size), size.height())
         });
-        assert_eq!(dropped, 0);
+        assert_eq!(drops, LabelDrops::default());
         assert_eq!(placed.len(), 2);
 
         // Neither took the naive "3 px is clearance enough" spot.
@@ -470,6 +487,30 @@ mod tests {
             })
             .collect();
         assert!(!boxes[0].overlaps(&boxes[1]), "haloed labels overlap: {:?} {:?}", boxes[0], boxes[1]);
+    }
+
+    #[test]
+    fn an_anchor_off_the_map_is_counted_apart_from_a_crowded_one() {
+        let map = Rect { x: 0.0, y: 0.0, w: 400.0, h: 400.0 };
+        let mk = |anchor: (f32, f32), text: &str| LabelRequest {
+            anchor,
+            text: text.into(),
+            size: TextSize::Small,
+            color: [0, 0, 0, 255],
+            priority: 1,
+            centred_first: false,
+        };
+        // A dozen labels on one anchor: the map has room for a few of them.
+        let mut reqs: Vec<LabelRequest> = (0..12).map(|i| mk((200.0, 200.0), &format!("n{i}"))).collect();
+        // This one is off the map entirely, which is not the same complaint.
+        reqs.push(mk((-50.0, 200.0), "away"));
+        let (placed, drops) = place_labels(&mut reqs, map, |s, size| {
+            (super::super::canvas::measure(s, size), size.height())
+        });
+        assert!(!placed.is_empty() && placed.len() < 12, "placed {} of 12", placed.len());
+        assert_eq!(drops.off_map, 1);
+        assert_eq!(drops.crowded, 12 - placed.len());
+        assert!(placed.iter().all(|p| p.text != "away"));
     }
 
     #[test]
@@ -493,10 +534,10 @@ mod tests {
                 centred_first: false,
             },
         ];
-        let (placed, dropped) = place_labels(&mut reqs, map, |s, size| {
+        let (placed, drops) = place_labels(&mut reqs, map, |s, size| {
             (super::super::canvas::measure(s, size), size.height())
         });
-        assert_eq!(dropped, 0);
+        assert_eq!(drops, LabelDrops::default());
         assert_eq!(placed.len(), 2);
         let a = Rect { x: placed[0].x, y: placed[0].y, w: 17.0, h: 7.0 };
         let b = Rect { x: placed[1].x, y: placed[1].y, w: 17.0, h: 7.0 };

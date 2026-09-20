@@ -430,13 +430,16 @@ fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canv
     layers::markers(scene, &prep, canvas, &mut labels);
 
     // Every label is placed together, after the artwork, so none is buried.
-    let (placed, dropped) =
+    let (placed, drops) =
         cartography::place_labels(&mut labels, l.map, |s, size| (canvas::measure(s, size), size.height()));
     for label in placed {
         canvas.text(label.x, label.y, &label.text, label.size, label.color, true);
     }
-    if dropped > 0 {
-        warnings.push(format!("{dropped} labels hidden to avoid overlap"));
+    if drops.crowded > 0 {
+        warnings.push(format!("{} labels hidden to avoid overlap", drops.crowded));
+    }
+    if drops.off_map > 0 {
+        warnings.push(format!("{} labels off the map", drops.off_map));
     }
     canvas.clip(None);
 
