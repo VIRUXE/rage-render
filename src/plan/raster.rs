@@ -260,5 +260,18 @@ mod tests {
             }
         }
         assert!(inked > 0, "the clip swallowed the text entirely");
+
+        // The halo still surrounds the ink that survived the clip: white
+        // next to black, both inside the rect.
+        let at = |x: i32, y: i32| canvas.img.get_pixel(x as u32, y as u32).0;
+        let haloed = (x0 + 1..x1 - 1).any(|x| {
+            (y0 + 1..y1 - 1).any(|y| {
+                at(x as i32, y as i32) == [255, 255, 255, 255]
+                    && (-1..=1).any(|dy| {
+                        (-1..=1).any(|dx| (dx != 0 || dy != 0) && at(x as i32 + dx, y as i32 + dy) == [0, 0, 0, 255])
+                    })
+            })
+        });
+        assert!(haloed, "no white halo pixel next to the ink");
     }
 }

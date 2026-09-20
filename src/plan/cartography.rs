@@ -138,13 +138,6 @@ pub(crate) fn place_labels(
     let mut drops = LabelDrops::default();
 
     for req in reqs.iter() {
-        // An anchor outside the map can never be placed, and saying it was
-        // hidden to avoid overlap would send the reader looking for a clash
-        // that is not there.
-        if !map.contains(req.anchor.0, req.anchor.1, 0.0, 0.0) {
-            drops.off_map += 1;
-            continue;
-        }
         // The box reserved for a label is its glyph box grown by the halo the
         // backends draw around it (a pixel of outline in the raster, a 3 px
         // stroke in SVG), so that the `PAD` clearance below is on top of the
@@ -189,6 +182,14 @@ pub(crate) fn place_labels(
                     color: req.color,
                 });
             }
+            // Nothing fit. An anchor outside the map usually means no
+            // candidate could reach it — reporting that as "hidden to avoid
+            // overlap" would send the reader looking for a clash that is not
+            // there — while one on the map lost its spots to other labels.
+            // The anchor is only consulted here, because a candidate sits
+            // `GAP` away from it and an anchor just past the edge can still
+            // be labelled on the map.
+            None if !map.contains(req.anchor.0, req.anchor.1, 0.0, 0.0) => drops.off_map += 1,
             None => drops.crowded += 1,
         }
     }
@@ -487,6 +488,47 @@ mod tests {
             })
             .collect();
         assert!(!boxes[0].overlaps(&boxes[1]), "haloed labels overlap: {:?} {:?}", boxes[0], boxes[1]);
+    }
+
+    #[test]
+    fn an_anchor_just_off_the_map_still_gets_its_label_placed() {
+        // Being outside the map rect is not on its own a reason to give up:
+        // the candidate spots sit `GAP` away from the anchor, so one of them
+        // can still land entirely on the map.
+        let map = Rect { x: 0.0, y: 0.0, w: 400.0, h: 400.0 };
+        let mk = |anchor: (f32, f32), text: &str| LabelRequest {
+            anchor,
+            text: text.into(),
+            size: TextSize::Small,
+            color: [0, 0, 0, 255],
+            priority: 1,
+            centred_first: false,
+        };
+        let mut reqs = vec![mk((-1.0, 200.0), "edge")];
+        let (placed, drops) = place_labels(&mut reqs, map, |s, size| {
+            (super::super::canvas::measure(s, size), size.height())
+        });
+        assert_eq!(drops, LabelDrops::default(), "a placeable label was counted as dropped");
+        assert_eq!(placed.len(), 1);
+        assert!(placed[0].x >= map.x, "the label was placed off the map at x={}", placed[0].x);
+
+        // Far enough out that no candidate reaches the map: off the map, and
+        // not "hidden to avoid overlap" — nothing was in its way.
+        let mut reqs = vec![mk((-50.0, 200.0), "away")];
+        let (placed, drops) = place_labels(&mut reqs, map, |s, size| {
+            (super::super::canvas::measure(s, size), size.height())
+        });
+        assert!(placed.is_empty());
+        assert_eq!(drops, LabelDrops { crowded: 0, off_map: 1 });
+
+        // On the map with every spot taken is still crowded.
+        let mut reqs: Vec<LabelRequest> = (0..12).map(|i| mk((200.0, 200.0), &format!("n{i}"))).collect();
+        let (placed, drops) = place_labels(&mut reqs, map, |s, size| {
+            (super::super::canvas::measure(s, size), size.height())
+        });
+        assert_eq!(drops.off_map, 0);
+        assert_eq!(drops.crowded, 12 - placed.len());
+        assert!(drops.crowded > 0, "12 labels on one anchor should crowd each other out");
     }
 
     #[test]
