@@ -46,6 +46,8 @@ one picture. `compose_sheet` tiles labelled images into a grid, and
 rooms and portals, entity dots, the collision and drawable meshes as a
 shaded underlay, and the navmesh, on a page with a grid, axes, a scale bar, a
 north arrow and a legend.
+Labels are monospace text sized to the bitmap font's advance, so an SVG
+plan's text lines up with the same plan's PNG.
 
 ```rust
 use rage_formats::Vec2;

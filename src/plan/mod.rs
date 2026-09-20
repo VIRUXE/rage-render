@@ -592,6 +592,19 @@ mod tests {
     }
 
     #[test]
+    fn svg_text_is_spaced_not_stretched() {
+        let (svg, _) = plan_svg(&room_scene(), &PlanOptions::default()).expect("a plan");
+        assert!(svg.contains("<text"), "no text at all");
+        assert!(
+            !svg.contains("spacingAndGlyphs"),
+            "glyphs are still stretched to the bitmap width"
+        );
+        assert!(svg.contains("lengthAdjust=\"spacing\""), "textLength is adjusted some other way");
+        // The width the label placer measured is still asserted on the text.
+        assert!(svg.contains("textLength="), "textLength is gone, so labels no longer match the PNG");
+    }
+
+    #[test]
     fn svg_draws_the_title_and_the_room() {
         let (svg, _) = plan_svg(&room_scene(), &PlanOptions::default()).expect("a plan");
         assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));

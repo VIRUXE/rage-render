@@ -213,9 +213,15 @@ impl Canvas for SvgCanvas {
             return;
         }
         let halo = if halo { " stroke=\"white\" stroke-width=\"3\" paint-order=\"stroke\"" } else { "" };
+        // `textLength` keeps the run as wide as the bitmap font measured it —
+        // label placement was computed from that width — but adjusting it with
+        // `spacingAndGlyphs` squeezed or stretched the glyphs themselves.
+        // `spacing` moves the letters instead and leaves their shapes alone;
+        // `font-size` stays the bitmap cell height, so a glyph is as tall in
+        // the SVG as it is in the PNG.
         let el = format!(
             "<text x=\"{x:.2}\" y=\"{y:.2}\" font-family=\"monospace\" font-size=\"{}\" \
-             textLength=\"{:.2}\" lengthAdjust=\"spacingAndGlyphs\" dominant-baseline=\"hanging\" {}{halo}>{}</text>",
+             textLength=\"{:.2}\" lengthAdjust=\"spacing\" dominant-baseline=\"hanging\" {}{halo}>{}</text>",
             crate::font::GLYPH_H * size.scale(),
             measure(s, size),
             paint("fill", color),
