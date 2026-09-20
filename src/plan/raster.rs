@@ -32,6 +32,25 @@ impl RasterCanvas {
         blend(&mut self.img, x, y, c);
     }
 
+    /// Stamps `s`'s glyphs with their top-left corner at `(x, y)`, clipped.
+    /// Text is opaque ink rather than paint: each pixel replaces what is
+    /// under it, as `font::draw_text` does.
+    fn glyphs(&mut self, x: i32, y: i32, s: &str, scale: u32, colour: Rgba8) {
+        let clip = self.clip;
+        let img = &mut self.img;
+        let (w, h) = (img.width() as i32, img.height() as i32);
+        crate::font::text_pixels(x, y, s, scale, |px, py| {
+            if let Some(r) = clip {
+                if px < r[0] || py < r[1] || px >= r[2] || py >= r[3] {
+                    return;
+                }
+            }
+            if px >= 0 && py >= 0 && px < w && py < h {
+                img.put_pixel(px as u32, py as u32, Rgba(colour));
+            }
+        });
+    }
+
     /// Scanline even-odd fill of a simple polygon.
     fn fill(&mut self, pts: &[(f32, f32)], colour: Rgba8) {
         if pts.len() < 3 {
@@ -181,16 +200,19 @@ impl Canvas for RasterCanvas {
         let scale = size.scale();
         let s = &drawable_text(s);
         let (x, y) = (x.round() as i32, y.round() as i32);
+        // Glyph pixels go through `glyphs` rather than straight onto the
+        // image, so text obeys the clip rect like every other primitive: a
+        // label near the edge of the map used to spill over the axes.
         if halo {
             for dy in -1..=1 {
                 for dx in -1..=1 {
                     if dx != 0 || dy != 0 {
-                        crate::font::draw_text(&mut self.img, x + dx, y + dy, s, scale, [255, 255, 255, 255]);
+                        self.glyphs(x + dx, y + dy, s, scale, [255, 255, 255, 255]);
                     }
                 }
             }
         }
-        crate::font::draw_text(&mut self.img, x, y, s, scale, color);
+        self.glyphs(x, y, s, scale, color);
     }
 
     fn text_width(&self, s: &str, size: TextSize) -> f32 {
@@ -210,5 +232,33 @@ impl Canvas for RasterCanvas {
         self.clip = rect.map(|(x, y, w, h)| {
             [x.round() as i32, y.round() as i32, (x + w).round() as i32, (y + h).round() as i32]
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_is_confined_to_the_clip_rect() {
+        const BG: Rgba8 = [0, 128, 0, 255];
+        let mut canvas = RasterCanvas::new(80, 40, BG);
+        let rect = (20.0, 12.0, 20.0, 16.0);
+        canvas.clip(Some(rect));
+        // Straddles the left edge of the clip and, haloed, its top as well.
+        canvas.text(6.0, 12.0, "WWWWWWWW", TextSize::Body, [0, 0, 0, 255], true);
+        canvas.clip(None);
+
+        let (x0, y0) = (rect.0 as u32, rect.1 as u32);
+        let (x1, y1) = ((rect.0 + rect.2) as u32, (rect.1 + rect.3) as u32);
+        let mut inked = 0;
+        for (x, y, p) in canvas.img.enumerate_pixels() {
+            let inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+            if p.0 != BG {
+                assert!(inside, "text ink at ({x}, {y}), outside the clip rect");
+                inked += 1;
+            }
+        }
+        assert!(inked > 0, "the clip swallowed the text entirely");
     }
 }

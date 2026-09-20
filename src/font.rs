@@ -148,10 +148,21 @@ pub fn text_width(text: &str, scale: u32) -> u32 {
 /// would land outside the image (including at negative coordinates) are
 /// silently skipped.
 pub fn draw_text(img: &mut RgbaImage, x: i32, y: i32, text: &str, scale: u32, color: [u8; 4]) {
+    let (img_w, img_h) = (img.width() as i32, img.height() as i32);
+    text_pixels(x, y, text, scale, |px, py| {
+        if px >= 0 && py >= 0 && px < img_w && py < img_h {
+            img.put_pixel(px as u32, py as u32, image::Rgba(color));
+        }
+    });
+}
+
+/// Calls `plot` once for every pixel [`draw_text`] would set, in image
+/// coordinates and unbounded, so a caller with its own idea of where ink may
+/// land — a clip rect, say — can decide for itself.
+pub(crate) fn text_pixels(x: i32, y: i32, text: &str, scale: u32, mut plot: impl FnMut(i32, i32)) {
     if scale == 0 {
         return;
     }
-    let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let advance = ((GLYPH_W + 1) * scale) as i32;
 
     for (i, c) in text.chars().enumerate() {
@@ -167,16 +178,8 @@ pub fn draw_text(img: &mut RgbaImage, x: i32, y: i32, text: &str, scale: u32, co
                 let px0 = base_x + (col * scale) as i32;
                 let py0 = y + (row * scale) as i32;
                 for sy in 0..scale as i32 {
-                    let py = py0 + sy;
-                    if py < 0 || py >= img_h {
-                        continue;
-                    }
                     for sx in 0..scale as i32 {
-                        let px = px0 + sx;
-                        if px < 0 || px >= img_w {
-                            continue;
-                        }
-                        img.put_pixel(px as u32, py as u32, image::Rgba(color));
+                        plot(px0 + sx, py0 + sy);
                     }
                 }
             }
