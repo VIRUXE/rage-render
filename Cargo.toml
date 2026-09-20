@@ -1,6 +1,6 @@
 [package]
 name = "rage-render"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Software renderer, contact sheets and glTF export for RAGE drawables parsed by rage-formats"
 license = "Unlicense"
