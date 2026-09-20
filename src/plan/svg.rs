@@ -8,19 +8,42 @@ use image::RgbaImage;
 
 use super::canvas::{drawable_text, measure, Canvas, Rgba8, TextSize};
 
-/// The id of the one clip path the page uses.
-const CLIP_ID: &str = "plan-map";
+/// One round of FNV-1a over `bytes`.
+fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
+    for b in bytes {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The id for this plan's clip path. Ids are document-wide in SVG, so two
+/// plans inlined into one HTML page with the same id would both be clipped
+/// by whichever `clipPath` the browser resolved first. Hashing what makes a
+/// plan what it is keeps the id stable for a given plan and distinct between
+/// different ones.
+pub(crate) fn clip_id(title: &str, region: [f32; 4], size: (u32, u32)) -> String {
+    let mut h = fnv1a(0xcbf2_9ce4_8422_2325, title.as_bytes());
+    for v in region {
+        h = fnv1a(h, &v.to_bits().to_le_bytes());
+    }
+    h = fnv1a(h, &size.0.to_le_bytes());
+    h = fnv1a(h, &size.1.to_le_bytes());
+    format!("plan-map-{:08x}", h as u32)
+}
 
 /// A [`Canvas`] that appends SVG elements to a document body.
 pub(crate) struct SvgCanvas {
     body: String,
+    /// The id of the one clip path this document uses.
+    clip_id: String,
     /// Whether a `<g clip-path=…>` is currently open.
     clipped: bool,
 }
 
 impl SvgCanvas {
-    pub(crate) fn new() -> Self {
-        Self { body: String::new(), clipped: false }
+    pub(crate) fn new(clip_id: String) -> Self {
+        Self { body: String::new(), clip_id, clipped: false }
     }
 
     /// Closes the clip group, if one is open.
@@ -208,11 +231,12 @@ impl Canvas for SvgCanvas {
     fn clip(&mut self, rect: Option<(f32, f32, f32, f32)>) {
         self.close_clip();
         if let Some((x, y, w, h)) = rect {
+            let id = self.clip_id.clone();
             let el = format!(
-                "<clipPath id=\"{CLIP_ID}\"><rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{w:.2}\" height=\"{h:.2}\"/></clipPath>"
+                "<clipPath id=\"{id}\"><rect x=\"{x:.2}\" y=\"{y:.2}\" width=\"{w:.2}\" height=\"{h:.2}\"/></clipPath>"
             );
             self.push(&el);
-            self.push(&format!("<g clip-path=\"url(#{CLIP_ID})\">"));
+            self.push(&format!("<g clip-path=\"url(#{id})\">"));
             self.clipped = true;
         }
     }
@@ -241,6 +265,16 @@ mod tests {
         assert_eq!(base64(b"M"), "TQ==");
         assert_eq!(base64(b""), "");
         assert_eq!(base64(b"any carnal pleasure."), "YW55IGNhcm5hbCBwbGVhc3VyZS4=");
+    }
+
+    #[test]
+    fn clip_ids_follow_the_plan() {
+        let id = clip_id("v_office", [0.0, 0.0, 8.0, 6.0], (400, 300));
+        assert_eq!(id, clip_id("v_office", [0.0, 0.0, 8.0, 6.0], (400, 300)));
+        assert_ne!(id, clip_id("v_kitchen", [0.0, 0.0, 8.0, 6.0], (400, 300)));
+        assert_ne!(id, clip_id("v_office", [0.0, 0.0, 8.0, 7.0], (400, 300)));
+        assert_ne!(id, clip_id("v_office", [0.0, 0.0, 8.0, 6.0], (400, 301)));
+        assert!(id.starts_with("plan-map-") && id.len() == "plan-map-".len() + 8, "{id}");
     }
 
     #[test]

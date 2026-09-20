@@ -473,7 +473,8 @@ pub fn plan_png(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<(RgbaImage,
 /// Draws the plan as a hybrid SVG: vector page, mesh underlay as one PNG.
 pub fn plan_svg(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<(String, PlanReport)> {
     let prep = prepare(scene, opts)?;
-    let mut canvas = SvgCanvas::new();
+    let clip_id = svg::clip_id(&scene.title, prep.region, (prep.layout.width, prep.layout.height));
+    let mut canvas = SvgCanvas::new(clip_id);
     let report = draw(prep, scene, opts, &mut canvas);
     Ok((canvas.finish(report.width, report.height), report))
 }
@@ -544,6 +545,37 @@ mod tests {
         let p = img.get_pixel(cx as u32, cy as u32).0;
         assert!(p[1] > p[0] && p[1] > p[2], "navmesh centroid is not greenish: {p:?}");
         assert_eq!(report.drawn.iter().find(|(l, _)| *l == Layer::Navmesh).map(|(_, n)| *n), Some(1));
+    }
+
+    #[test]
+    fn two_plans_get_their_own_clip_id() {
+        let clip_id = |svg: &str| -> String {
+            let start = svg.find("<clipPath id=\"").expect("a clip path") + "<clipPath id=\"".len();
+            let rest = &svg[start..];
+            rest[..rest.find('"').expect("a closing quote")].to_string()
+        };
+        let mut a = room_scene();
+        a.title = "v_office".into();
+        let mut b = room_scene();
+        b.title = "v_kitchen".into();
+        let (sa, _) = plan_svg(&a, &PlanOptions::default()).expect("a plan");
+        let (sb, _) = plan_svg(&b, &PlanOptions::default()).expect("a plan");
+
+        let (ia, ib) = (clip_id(&sa), clip_id(&sb));
+        for id in [&ia, &ib] {
+            let hex = id.strip_prefix("plan-map-").unwrap_or_else(|| panic!("odd clip id '{id}'"));
+            assert_eq!(hex.len(), 8, "clip id '{id}' is not eight hex digits");
+            assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "clip id '{id}'");
+        }
+        assert_ne!(ia, ib, "two plans share a clip id, so inlining both in one page breaks one");
+
+        // Each document refers to its own id, and only to its own.
+        assert_eq!(sa.matches(&format!("url(#{ia})")).count(), 1);
+        assert_eq!(sb.matches(&format!("url(#{ib})")).count(), 1);
+        assert!(!sa.contains(&ib) && !sb.contains(&ia));
+        // The same scene twice is the same document, id included.
+        let (sa2, _) = plan_svg(&a, &PlanOptions::default()).expect("a plan");
+        assert_eq!(clip_id(&sa2), ia);
     }
 
     #[test]
@@ -627,8 +659,9 @@ mod tests {
         }
 
         let (svg, _) = plan_svg(&scene, &opts).expect("a plan");
-        assert!(svg.contains("<clipPath id=\"plan-map\">"), "no clip path");
-        assert!(svg.contains("<g clip-path=\"url(#plan-map)\">"), "the map content is not clipped");
+        let id = svg::clip_id(&scene.title, report.region, (report.width, report.height));
+        assert!(svg.contains(&format!("<clipPath id=\"{id}\">")), "no clip path");
+        assert!(svg.contains(&format!("<g clip-path=\"url(#{id})\">")), "the map content is not clipped");
         assert_eq!(svg.matches("</g>").count(), 1, "the clip group is left open or closed twice");
     }
 
