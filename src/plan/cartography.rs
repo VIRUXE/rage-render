@@ -18,6 +18,10 @@ pub(crate) const LEGEND_W: f32 = 190.0;
 pub(crate) const CAPTION_LINE_H: f32 = 14.0;
 /// Height of one legend row.
 pub(crate) const LEGEND_ROW_H: f32 = 18.0;
+/// How far past its glyph box a label's halo reaches, in pixels. The raster
+/// backend outlines text by one pixel and the SVG one strokes it 3 px wide
+/// (1.5 px each side), so two pixels covers both.
+pub(crate) const HALO: f32 = 2.0;
 /// A grid line every `nice_step` that is at least this far apart on the page.
 pub(crate) const MIN_GRID_GAP: f32 = 50.0;
 
@@ -124,7 +128,13 @@ pub(crate) fn place_labels(
     let mut dropped = 0;
 
     for req in reqs.iter() {
-        let (w, h) = measure(&req.text, req.size);
+        // The box reserved for a label is its glyph box grown by the halo the
+        // backends draw around it (a pixel of outline in the raster, a 3 px
+        // stroke in SVG), so that the `PAD` clearance below is on top of the
+        // halo rather than swallowed by it. `spot` is that box's corner; the
+        // text itself is drawn `HALO` inside it.
+        let (text_w, text_h) = measure(&req.text, req.size);
+        let (w, h) = (text_w + 2.0 * HALO, text_h + 2.0 * HALO);
         let (ax, ay) = req.anchor;
         let mut candidates: Vec<(f32, f32)> = Vec::with_capacity(9);
         if req.centred_first {
@@ -155,8 +165,8 @@ pub(crate) fn place_labels(
             Some((x, y)) => {
                 taken.push(Rect { x, y, w, h });
                 placed.push(PlacedLabel {
-                    x,
-                    y,
+                    x: x + HALO,
+                    y: y + HALO,
                     text: req.text.clone(),
                     size: req.size,
                     color: req.color,
@@ -425,6 +435,41 @@ mod tests {
         assert_eq!(size, TextSize::Small);
         assert!(text.ends_with(".."), "{text}");
         assert!(measure(&text, TextSize::Small) <= 60.0);
+    }
+
+    #[test]
+    fn labels_keep_clear_of_each_other_s_halo() {
+        // The halo is drawn outside the glyph box — one pixel in the raster
+        // backend, a 3 px stroke in SVG — so boxes a few pixels apart still
+        // touch. Two labels whose bare boxes would sit 3 px apart must not
+        // both take their first choice.
+        let map = Rect { x: 0.0, y: 0.0, w: 400.0, h: 400.0 };
+        let mk = |anchor: (f32, f32), text: &str| LabelRequest {
+            anchor,
+            text: text.into(),
+            size: TextSize::Small,
+            color: [0, 0, 0, 255],
+            priority: 1,
+            centred_first: false,
+        };
+        let mut reqs = vec![mk((200.0, 200.0), "one"), mk((220.0, 203.0), "two")];
+        let (placed, dropped) = place_labels(&mut reqs, map, |s, size| {
+            (super::super::canvas::measure(s, size), size.height())
+        });
+        assert_eq!(dropped, 0);
+        assert_eq!(placed.len(), 2);
+
+        // Neither took the naive "3 px is clearance enough" spot.
+        let boxes: Vec<Rect> = placed
+            .iter()
+            .map(|p| Rect {
+                x: p.x - HALO,
+                y: p.y - HALO,
+                w: measure(&p.text, p.size) + 2.0 * HALO,
+                h: p.size.height() + 2.0 * HALO,
+            })
+            .collect();
+        assert!(!boxes[0].overlaps(&boxes[1]), "haloed labels overlap: {:?} {:?}", boxes[0], boxes[1]);
     }
 
     #[test]
