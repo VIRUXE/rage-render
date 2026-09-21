@@ -11,7 +11,7 @@ renders, a bitmap font for labels, and a wasm-exposed glTF exporter.
 
 ```toml
 [dependencies]
-rage-render = "0.1"
+rage-render = "0.2"
 ```
 
 ## Pipeline

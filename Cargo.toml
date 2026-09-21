@@ -1,6 +1,6 @@
 [package]
 name = "rage-render"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Software renderer, contact sheets and glTF export for RAGE drawables parsed by rage-formats"
 license = "Unlicense"
@@ -12,7 +12,7 @@ categories = ["rendering", "game-development"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-rage-formats = { version = "0.1", path = "../rage-formats" }
+rage-formats = { version = "0.2", path = "../rage-formats" }
 anyhow = "1.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 json = "0.12"
@@ -21,4 +21,4 @@ console_error_panic_hook = "0.1"
 
 [dev-dependencies]
 flate2 = "1.0"
-rage-formats = { version = "0.1", path = "../rage-formats", features = ["test-support"] }
+rage-formats = { version = "0.2", path = "../rage-formats", features = ["test-support"] }
