@@ -156,7 +156,7 @@ enum Tier {
 
 /// World-space `x0,y0,x1,y1` framing what is worth looking at, by [`Tier`].
 /// Markers are always included, but never decide the tier by themselves.
-pub(crate) fn scene_bounds(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>) -> Option<[f32; 4]> {
+pub fn scene_bounds(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>) -> Option<[f32; 4]> {
     let mut bb = [Tier::Interior, Tier::Meshes, Tier::ExteriorNav]
         .into_iter()
         .find_map(|tier| bounds_of(scene, layers, band, tier));

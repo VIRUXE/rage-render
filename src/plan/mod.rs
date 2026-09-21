@@ -26,7 +26,7 @@ use palette::{Facing, Mesh};
 use raster::RasterCanvas;
 use svg::SvgCanvas;
 
-pub use geometry::{clip_tri_to_band, quad_footprint, rooms_stacked};
+pub use geometry::{clip_tri_to_band, quad_footprint, rooms_stacked, scene_bounds};
 
 /// A drawable layer of the plan. Layers are drawn bottom-up in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
