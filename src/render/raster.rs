@@ -473,7 +473,7 @@ mod tests {
     fn triangle_covers_expected_pixels() {
         let options = flat_options();
         let (view_proj, _eye, light) =
-            camera_for(&bounds(), View::Front, 1.0, options.fov_deg, options.margin);
+            camera_for(&bounds(), View::Front, crate::render::Facing::PositiveY, 1.0, options.fov_deg, options.margin);
 
         let verts = vec![
             vertex(Vec3::new(-1.0, 0.0, -1.0), Vec2::new(0.0, 1.0)),

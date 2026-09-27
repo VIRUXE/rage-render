@@ -1,7 +1,7 @@
 //! Camera placement: fits a drawable's bounds into one of the fixed views.
 
 use rage_formats::math::{Mat4, Vec3};
-use crate::render::View;
+use crate::render::{Facing, View};
 use rage_formats::ydd::DrawableBounds;
 
 /// Direction the light travels *toward* — i.e. the vector used in `dot(n, l)`.
@@ -22,11 +22,16 @@ pub(crate) fn fit_radius(bounds: &DrawableBounds) -> f32 {
 
 /// Builds the view-projection matrix that frames `bounds` from `view`.
 ///
-/// The world is Z-up with +Y forward. Returns the combined matrix, the eye
-/// position and the normalized light direction.
+/// The world is Z-up. `facing` says which way the model's front points:
+/// vehicles face +Y, props -Y (an unresolved `Auto` is taken as -Y). The
+/// `front`/`back`/`left`/`right` views follow it; `top` and `iso` are the
+/// same either way (`iso` looks from +X, -Y, +Z, a front three-quarter view
+/// of a prop). Returns the combined matrix, the eye position and the
+/// normalized light direction.
 pub(crate) fn camera_for(
     bounds: &DrawableBounds,
     view: View,
+    facing: Facing,
     aspect: f32,
     fov_deg: f32,
     margin: f32,
@@ -43,18 +48,30 @@ pub(crate) fn camera_for(
         distance /= aspect;
     }
 
+    // Side views as seen for a +Y-facing model; a -Y-facing one is the same
+    // turned half a revolution about Z.
+    let turn = if facing == Facing::PositiveY { 1.0 } else { -1.0 };
     let direction = match view {
-        View::Front => Vec3::new(0.0, 1.0, 0.0),
-        View::Back => Vec3::new(0.0, -1.0, 0.0),
-        View::Left => Vec3::new(-1.0, 0.0, 0.0),
-        View::Right => Vec3::new(1.0, 0.0, 0.0),
+        View::Front => Vec3::new(0.0, turn, 0.0),
+        View::Back => Vec3::new(0.0, -turn, 0.0),
+        View::Left => Vec3::new(-turn, 0.0, 0.0),
+        View::Right => Vec3::new(turn, 0.0, 0.0),
         View::Top => Vec3::new(0.0, 0.0, 1.0),
         View::Iso => Vec3::new(1.0, -1.0, 1.0),
+        View::Angle { azimuth, elevation } => {
+            // In the model's own frame: `front` points where it faces,
+            // `right` to its right (front x up in a Z-up right-handed world).
+            let front = Vec3::new(0.0, turn, 0.0);
+            let right = Vec3::new(turn, 0.0, 0.0);
+            let (az, el) = ((azimuth as f32).to_radians(), (elevation as f32).to_radians());
+            (front * az.cos() + right * az.sin()) * el.cos() + Vec3::Z * el.sin()
+        }
     }
     .normalize();
 
     let eye = center + direction * distance;
-    let up = if view == View::Top { Vec3::Y } else { Vec3::Z };
+    // Looking straight down (or up), Z cannot be screen-up; +Y is, as for `top`.
+    let up = if view == View::Top || direction.z.abs() > 0.999 { Vec3::Y } else { Vec3::Z };
 
     let near = (distance - 2.0 * radius).max(0.01);
     let far = distance + 2.0 * radius;
@@ -111,7 +128,7 @@ mod tests {
         ];
 
         for (view, direction) in expected {
-            let (_, eye, _) = camera_for(&bounds, view, 1.0, fov_deg, margin);
+            let (_, eye, _) = camera_for(&bounds, view, Facing::PositiveY, 1.0, fov_deg, margin);
             let offset = eye - bounds.center;
             assert!(
                 (offset.length() - expected_distance).abs() < 1e-3,
@@ -126,6 +143,53 @@ mod tests {
         }
     }
 
+    /// A -Y-facing model (a prop) is seen from the other side in the four
+    /// side views; top and iso do not move.
+    #[test]
+    fn props_turn_the_side_views_around() {
+        let expected = [
+            (View::Front, Vec3::new(0.0, -1.0, 0.0)),
+            (View::Back, Vec3::new(0.0, 1.0, 0.0)),
+            (View::Left, Vec3::new(1.0, 0.0, 0.0)),
+            (View::Right, Vec3::new(-1.0, 0.0, 0.0)),
+            (View::Top, Vec3::new(0.0, 0.0, 1.0)),
+            (View::Iso, Vec3::new(1.0, -1.0, 1.0).normalize()),
+        ];
+        for (view, direction) in expected {
+            for facing in [Facing::NegativeY, Facing::Auto] {
+                let (_, eye, _) = camera_for(&bounds(), view, facing, 1.0, 40.0, 1.1);
+                let unit = (eye - bounds().center).normalize();
+                assert!((unit - direction).length() < 1e-5, "{view} {facing:?}: {unit:?} != {direction:?}");
+            }
+        }
+    }
+
+    /// Angles are measured from the model's front: 0:0 is `front`, 90:0 its
+    /// `right`, 180:0 `back`, 270:0 (and -90:0) `left`, 0:90 straight down,
+    /// for either facing.
+    #[test]
+    fn angles_line_up_with_the_named_views() {
+        let pairs = [
+            ((0, 0), View::Front),
+            ((90, 0), View::Right),
+            ((180, 0), View::Back),
+            ((270, 0), View::Left),
+        ];
+        for facing in [Facing::PositiveY, Facing::NegativeY] {
+            for ((azimuth, elevation), named) in pairs {
+                let (_, a, _) = camera_for(&bounds(), View::Angle { azimuth, elevation }, facing, 1.0, 40.0, 1.1);
+                let (_, b, _) = camera_for(&bounds(), named, facing, 1.0, 40.0, 1.1);
+                assert!((a - b).length() < 1e-3, "{azimuth}:{elevation} vs {named} ({facing:?})");
+            }
+            let (_, down, _) = camera_for(&bounds(), View::Angle { azimuth: 0, elevation: 90 }, facing, 1.0, 40.0, 1.1);
+            let (_, top, _) = camera_for(&bounds(), View::Top, facing, 1.0, 40.0, 1.1);
+            assert!((down - top).length() < 1e-3);
+            // Up and to the right of the front sits between them.
+            let (_, eye, _) = camera_for(&bounds(), View::Angle { azimuth: 45, elevation: 30 }, facing, 1.0, 40.0, 1.1);
+            assert!((eye - bounds().center).z > 0.0);
+        }
+    }
+
     /// The up vector: +Z is screen-up everywhere except Top, which uses +Y.
     #[test]
     fn up_axis_points_up_on_screen() {
@@ -135,7 +199,7 @@ mod tests {
         };
 
         for view in View::ALL {
-            let (view_proj, _, _) = camera_for(&bounds(), view, 1.0, 40.0, 1.1);
+            let (view_proj, _, _) = camera_for(&bounds(), view, Facing::PositiveY, 1.0, 40.0, 1.1);
             let p = ndc(&view_proj, up_axis(view) * 0.5);
             assert!(p.w > 0.0, "{view}: up sample behind the camera");
             assert!(p.y > 1e-3, "{view}: up axis did not project upward ({p:?})");
@@ -145,7 +209,7 @@ mod tests {
     #[test]
     fn every_view_places_the_eye_outside_the_bounds() {
         for view in View::ALL {
-            let (_, eye, _) = camera_for(&bounds(), view, 1.0, 40.0, 1.1);
+            let (_, eye, _) = camera_for(&bounds(), view, Facing::PositiveY, 1.0, 40.0, 1.1);
             assert!(eye.length() > 1.0, "{view}: eye inside bounds at {eye:?}");
         }
     }
@@ -153,7 +217,7 @@ mod tests {
     #[test]
     fn center_projects_in_front_of_the_camera_and_inside_ndc() {
         for view in View::ALL {
-            let (view_proj, _, _) = camera_for(&bounds(), view, 1.0, 40.0, 1.1);
+            let (view_proj, _, _) = camera_for(&bounds(), view, Facing::PositiveY, 1.0, 40.0, 1.1);
             let p = ndc(&view_proj, Vec3::ZERO);
             assert!(p.w > 0.0, "{view}: centre behind the camera");
             assert!(p.x.abs() < 1e-4 && p.y.abs() < 1e-4, "{view}: centre off-screen {p:?}");
@@ -164,7 +228,7 @@ mod tests {
     #[test]
     fn bounds_fit_inside_the_frustum_with_margin() {
         for view in View::ALL {
-            let (view_proj, _, _) = camera_for(&bounds(), view, 1.0, 40.0, 1.1);
+            let (view_proj, _, _) = camera_for(&bounds(), view, Facing::PositiveY, 1.0, 40.0, 1.1);
             for corner in [
                 Vec3::new(-1.0, -1.0, -1.0),
                 Vec3::new(1.0, -1.0, -1.0),
@@ -184,8 +248,8 @@ mod tests {
 
     #[test]
     fn narrow_aspect_pulls_the_camera_back() {
-        let (_, wide_eye, _) = camera_for(&bounds(), View::Front, 1.0, 40.0, 1.0);
-        let (_, tall_eye, _) = camera_for(&bounds(), View::Front, 0.5, 40.0, 1.0);
+        let (_, wide_eye, _) = camera_for(&bounds(), View::Front, Facing::PositiveY, 1.0, 40.0, 1.0);
+        let (_, tall_eye, _) = camera_for(&bounds(), View::Front, Facing::PositiveY, 0.5, 40.0, 1.0);
         assert!(tall_eye.length() > wide_eye.length());
     }
 
@@ -197,7 +261,7 @@ mod tests {
             box_min: Vec3::ZERO,
             box_max: Vec3::ZERO,
         };
-        let (view_proj, eye, light) = camera_for(&degenerate, View::Iso, 1.0, 40.0, 1.1);
+        let (view_proj, eye, light) = camera_for(&degenerate, View::Iso, Facing::PositiveY, 1.0, 40.0, 1.1);
         assert!(view_proj.0.iter().all(|v| v.is_finite()));
         assert!(eye.length().is_finite() && eye.length() > 0.0);
         assert!((light.length() - 1.0).abs() < 1e-5);
@@ -227,7 +291,7 @@ mod tests {
         for bounds in [&sphere_dominant, &box_dominant] {
             let fov_deg = 40.0f32;
             let margin = 1.1f32;
-            let (_, eye, _) = camera_for(bounds, View::Front, 1.0, fov_deg, margin);
+            let (_, eye, _) = camera_for(bounds, View::Front, Facing::PositiveY, 1.0, fov_deg, margin);
             let expected_distance = fit_radius(bounds) / (fov_deg.to_radians() * 0.5).sin() * margin;
             assert!(
                 (eye.length() - expected_distance).abs() < 1e-3,

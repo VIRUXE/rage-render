@@ -92,6 +92,13 @@ for (view, image, report) in rendered {
 }
 ```
 
+`front`/`back`/`left`/`right` are the model's own sides: `RenderOptions::facing`
+is `Facing::Auto` by default, which treats anything drawn with a
+`vehicle_*.sps` shader as facing +Y and everything else as facing -Y, as the
+game's vehicles and props do. `View::Angle { azimuth, elevation }` (parsed
+from `"30:20"`) places the camera anywhere around the model, in degrees from
+its front.
+
 Textures the drawable asks for but no layer supplies are drawn flat grey and
 listed in `report.missing_textures`, so the caller knows which dictionary to
 add. Geometries whose shader names no diffuse texture at all (lights, glass)
