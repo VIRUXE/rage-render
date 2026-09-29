@@ -1,5 +1,5 @@
-//! Painting the scene's own content: the mesh underlay, navmesh, rooms,
-//! portals, entities and markers, plus the label requests they raise.
+//! Painting the scene's own content: the mesh underlay, navmesh, paths,
+//! rooms, portals, entities and markers, plus the label requests they raise.
 
 use image::RgbaImage;
 use rage_formats::Vec3;
@@ -9,7 +9,7 @@ use super::cartography::LabelRequest;
 use super::geometry::Transform;
 use super::palette::{self, Facing};
 use super::raster::RasterCanvas;
-use super::{NavClass, PlanOptions, Prepared, Scene};
+use super::{NavClass, PathLinkKind, PathNodeKind, PlanOptions, Prepared, Scene};
 
 /// World polygon -> page points.
 fn to_px(poly: &[Vec3], t: &Transform) -> Vec<(f32, f32)> {
@@ -59,6 +59,37 @@ pub(crate) fn navmesh(scene: &Scene, prep: &Prepared, canvas: &mut dyn Canvas) {
                 }
             }
         }
+    }
+}
+
+/// Path links as lines, wider with more lanes, then the nodes as dots on
+/// top: vehicle nodes in road blue, ped nodes magenta, disabled ones red,
+/// as CodeWalker paints them; a junction node gets a ring.
+pub(crate) fn paths(scene: &Scene, prep: &Prepared, canvas: &mut dyn Canvas) {
+    let t = &prep.layout.transform;
+    for link in prep.path_links.iter().map(|i| &scene.path_links[*i]) {
+        let (colour, dash) = match link.kind {
+            PathLinkKind::Road => (palette::PATH_ROAD, None),
+            PathLinkKind::OffRoad => (palette::PATH_OFFROAD, None),
+            PathLinkKind::Ped => (palette::PATH_PED, None),
+            PathLinkKind::Shortcut => (palette::PATH_SHORTCUT, Some(palette::PATH_DASH)),
+            PathLinkKind::NoNavigation => (palette::PATH_ROAD, Some(palette::PATH_DASH)),
+            PathLinkKind::Disabled => (palette::PATH_DISABLED, None),
+        };
+        let width = match link.kind {
+            PathLinkKind::Ped | PathLinkKind::Shortcut => 1.0,
+            _ => (1.0 + 0.5 * link.lanes as f32).min(4.0),
+        };
+        canvas.line(t.to_px(link.from.x, link.from.y), t.to_px(link.to.x, link.to.y), colour, width, dash);
+    }
+    for node in prep.path_nodes.iter().map(|i| &scene.path_nodes[*i]) {
+        let fill = match node.kind {
+            PathNodeKind::Vehicle => palette::PATH_ROAD,
+            PathNodeKind::Ped => palette::PATH_PED,
+            PathNodeKind::Disabled => palette::PATH_DISABLED,
+        };
+        let ring = if node.junction { Some(palette::INK) } else { None };
+        canvas.circle(t.to_px(node.position.x, node.position.y), if node.junction { 3.0 } else { 2.0 }, fill, ring);
     }
 }
 

@@ -12,8 +12,8 @@ pub mod wasm;
 
 pub use font::{draw_text, text_width, FONT_5X7, GLYPH_H, GLYPH_W};
 pub use plan::{clip_tri_to_band, plan_png, plan_svg, quad_footprint, rooms_stacked, scene_bounds, EntityMark, Layer,
-               Marker, NavClass, NavShape, PlanOptions, PlanReport, PortalShape, RoomShape, Scene, Tri,
-               FLOOR_BAND};
+               Marker, NavClass, NavShape, PathLinkKind, PathLinkShape, PathNodeKind, PathNodeMark, PlanOptions,
+               PlanReport, PortalShape, RoomShape, Scene, Tri, FLOOR_BAND};
 pub use render::{is_vehicle_paint_shader, render_drawable, render_parts, render_views, RenderOptions,
                  RenderPart, RenderReport, TextureSet, View, VEHICLE_PAINT_SPS};
 pub use sheet::{compose_sheet, sheet_layout, SheetItem, SheetOptions};

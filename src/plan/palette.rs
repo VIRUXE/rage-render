@@ -14,6 +14,13 @@ pub(crate) const NAV_EXTERIOR_STROKE: Rgba8 = [0xC0, 0xC0, 0xC0, 255];
 pub(crate) const NAV_SUNK_STROKE: Rgba8 = [0xD0, 0x28, 0x28, 255];
 pub(crate) const NAV_SUNK_DASH: (f32, f32) = (4.0, 3.0);
 
+pub(crate) const PATH_ROAD: Rgba8 = [0x2E, 0x5C, 0xB8, 255];
+pub(crate) const PATH_OFFROAD: Rgba8 = [0x9C, 0x6B, 0x2F, 255];
+pub(crate) const PATH_PED: Rgba8 = [0xB0, 0x3A, 0xB0, 255];
+pub(crate) const PATH_DISABLED: Rgba8 = [0xD0, 0x28, 0x28, 255];
+pub(crate) const PATH_SHORTCUT: Rgba8 = [0x70, 0x70, 0x70, 255];
+pub(crate) const PATH_DASH: (f32, f32) = (3.0, 3.0);
+
 pub(crate) const PORTAL_STROKE: Rgba8 = [0x6A, 0x1B, 0x9A, 255];
 pub(crate) const PORTAL_DASH: (f32, f32) = (5.0, 3.0);
 pub(crate) const LIMBO_STROKE: Rgba8 = [0x80, 0x80, 0x80, 255];

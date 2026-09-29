@@ -1,5 +1,6 @@
 //! A 2D top-down "plan" of a GTA V interior: rooms, portals, entities,
-//! collision and drawable meshes, navmesh, drawn as a readable floor plan.
+//! collision and drawable meshes, navmesh and path nodes, drawn as a
+//! readable floor plan.
 //!
 //! The caller fills a [`Scene`] with world-space geometry and calls
 //! [`plan_png`] for an image or [`plan_svg`] for a hybrid SVG (vector page,
@@ -37,17 +38,20 @@ pub enum Layer {
     Collision,
     Drawable,
     Navmesh,
+    /// Vehicle and pedestrian path nodes and the links between them.
+    Paths,
 }
 
 impl Layer {
     /// Every layer, in declaration order.
-    pub const ALL: [Layer; 6] = [
+    pub const ALL: [Layer; 7] = [
         Layer::Rooms,
         Layer::Portals,
         Layer::Entities,
         Layer::Collision,
         Layer::Drawable,
         Layer::Navmesh,
+        Layer::Paths,
     ];
 
     /// The lowercase name used on the command line and in the legend.
@@ -59,6 +63,7 @@ impl Layer {
             Layer::Collision => "collision",
             Layer::Drawable => "drawable",
             Layer::Navmesh => "navmesh",
+            Layer::Paths => "paths",
         }
     }
 }
@@ -102,6 +107,46 @@ pub enum NavClass {
 pub struct NavShape {
     pub vertices: Vec<Vec3>,
     pub class: NavClass,
+}
+
+/// What a path node is for, which is what CodeWalker colours it by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathNodeKind {
+    Vehicle,
+    Ped,
+    /// Either of the node's two "disabled" bits is set.
+    Disabled,
+}
+
+/// One path node, drawn as a dot; a junction gets a ring.
+#[derive(Debug, Clone)]
+pub struct PathNodeMark {
+    pub position: Vec3,
+    pub kind: PathNodeKind,
+    pub junction: bool,
+}
+
+/// What a path link is, which picks its colour and stroke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathLinkKind {
+    Road,
+    OffRoad,
+    Ped,
+    Shortcut,
+    /// Flagged "don't use for navigation".
+    NoNavigation,
+    /// Either end is a disabled node.
+    Disabled,
+}
+
+/// One path link, drawn as a line whose width grows with its lane count.
+#[derive(Debug, Clone)]
+pub struct PathLinkShape {
+    pub from: Vec3,
+    pub to: Vec3,
+    pub kind: PathLinkKind,
+    /// Lanes forward plus backward.
+    pub lanes: u8,
 }
 
 /// One MLO room: its XY footprint and the z range it occupies.
@@ -155,6 +200,8 @@ pub struct Scene {
     pub collision: Vec<Tri>,
     pub drawable: Vec<Tri>,
     pub navmesh: Vec<NavShape>,
+    pub path_nodes: Vec<PathNodeMark>,
+    pub path_links: Vec<PathLinkShape>,
     pub markers: Vec<Marker>,
 }
 
@@ -221,6 +268,8 @@ pub(crate) struct Prepared {
     pub(crate) portals: Vec<usize>,
     pub(crate) entities: Vec<usize>,
     pub(crate) navmesh: Vec<usize>,
+    pub(crate) path_nodes: Vec<usize>,
+    pub(crate) path_links: Vec<usize>,
     pub(crate) mesh: Vec<MeshPoly>,
     /// Per enabled layer, how much of it is being drawn.
     pub(crate) counts: Vec<(Layer, usize)>,
@@ -343,6 +392,20 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
             }
         }
     }
+    let mut path_nodes = Vec::new();
+    let mut path_links = Vec::new();
+    if enabled(Layer::Paths) {
+        for (i, n) in scene.path_nodes.iter().enumerate() {
+            if in_band(n.position.z, band) && geometry::finite(n.position) {
+                path_nodes.push(i);
+            }
+        }
+        for (i, l) in scene.path_links.iter().enumerate() {
+            if (in_band(l.from.z, band) || in_band(l.to.z, band)) && geometry::finite(l.from) && geometry::finite(l.to) {
+                path_links.push(i);
+            }
+        }
+    }
     let mut mesh = Vec::new();
     if enabled(Layer::Collision) {
         mesh_polys(&scene.collision, Mesh::Collision, band, &mut mesh);
@@ -363,6 +426,7 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
                 Layer::Collision => collision_count,
                 Layer::Drawable => mesh.len() - collision_count,
                 Layer::Navmesh => navmesh.len(),
+                Layer::Paths => path_nodes.len(),
             };
             (l, n)
         })
@@ -375,7 +439,7 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
     let legend_rows = counts.iter().filter(|(_, n)| *n > 0).count() + sets.len();
     let layout = cartography::layout(region, opts.scale, legend_rows, scene.caption.len());
 
-    Ok(Prepared { region, layout, rooms, portals, entities, navmesh, mesh, counts, sets })
+    Ok(Prepared { region, layout, rooms, portals, entities, navmesh, path_nodes, path_links, mesh, counts, sets })
 }
 
 /// The legend rows for what was drawn.
@@ -392,6 +456,7 @@ fn legend_rows(scene: &Scene, prep: &Prepared) -> Vec<LegendRow> {
                 Layer::Collision => Mesh::Collision.swatch(),
                 Layer::Drawable => Mesh::Drawable.swatch(),
                 Layer::Navmesh => palette::NAV_INTERIOR_STROKE,
+                Layer::Paths => palette::PATH_ROAD,
             },
             text: format!("{} {n}", layer.name()),
         })
@@ -424,6 +489,7 @@ fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canv
 
     let mut labels: Vec<LabelRequest> = Vec::new();
     layers::navmesh(scene, &prep, canvas);
+    layers::paths(scene, &prep, canvas);
     layers::rooms(scene, &prep, canvas, &mut labels);
     layers::portals(scene, &prep, opts, canvas, &mut labels);
     layers::entities(scene, &prep, opts, canvas, &mut labels);
@@ -863,6 +929,45 @@ mod tests {
         let opts = PlanOptions { z_band: Some((-0.3, 2.0)), ..Default::default() };
         let (_, report) = plan_png(&scene, &opts).expect("a plan");
         assert_eq!(report.drawn.iter().find(|(l, _)| *l == Layer::Entities).map(|(_, n)| *n), Some(1));
+    }
+
+    #[test]
+    fn paths_are_drawn_counted_and_framed() {
+        let node = |x: f32, y: f32, kind: PathNodeKind| PathNodeMark { position: Vec3::new(x, y, 1.0), kind, junction: false };
+        let scene = Scene {
+            title: "nodes489".into(),
+            path_nodes: vec![
+                node(0.0, 0.0, PathNodeKind::Vehicle),
+                node(6.0, 4.0, PathNodeKind::Ped),
+                PathNodeMark { position: Vec3::new(6.0, 0.0, 1.0), kind: PathNodeKind::Disabled, junction: true },
+                node(3.0, 2.0, PathNodeKind::Vehicle),
+            ],
+            path_links: vec![
+                PathLinkShape { from: Vec3::new(0.0, 0.0, 1.0), to: Vec3::new(6.0, 0.0, 1.0), kind: PathLinkKind::Road, lanes: 4 },
+                PathLinkShape { from: Vec3::new(6.0, 0.0, 1.0), to: Vec3::new(6.0, 4.0, 1.0), kind: PathLinkKind::Ped, lanes: 0 },
+                PathLinkShape { from: Vec3::new(0.0, 0.0, 1.0), to: Vec3::new(6.0, 4.0, 1.0), kind: PathLinkKind::Shortcut, lanes: 1 },
+            ],
+            ..Default::default()
+        };
+        let opts = PlanOptions { scale: 10.0, ..Default::default() };
+        let (img, report) = plan_png(&scene, &opts).expect("a plan");
+        assert_eq!(report.region, [-2.0, -2.0, 8.0, 6.0], "the nodes frame the page");
+        assert_eq!(report.drawn.iter().find(|(l, _)| *l == Layer::Paths).map(|(_, n)| *n), Some(4));
+
+        // The road link runs along y = 0 from x 0 to 6: its middle is road-coloured.
+        let layout = cartography::layout(report.region, 10.0, 1, 0);
+        let (cx, cy) = layout.transform.to_px(3.0, 0.0);
+        let p = img.get_pixel(cx as u32, cy as u32).0;
+        assert_eq!(p, palette::PATH_ROAD, "no road ink at the middle of the link: {p:?}");
+
+        let (svg, _) = plan_svg(&scene, &opts).expect("a plan");
+        assert!(svg.contains("<line"), "links are lines in the SVG");
+        assert!(svg.contains("stroke-dasharray"), "the shortcut is dashed");
+
+        // Out of the band, nothing is drawn or framed.
+        let opts = PlanOptions { z_band: Some((10.0, 12.0)), ..Default::default() };
+        let err = plan_png(&scene, &opts).unwrap_err().to_string();
+        assert!(err.contains("nothing to draw"), "{err}");
     }
 
     #[test]

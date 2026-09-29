@@ -150,7 +150,7 @@ enum Tier {
     Interior,
     /// The collision and drawable meshes.
     Meshes,
-    /// Exterior navmesh polygons.
+    /// Exterior navmesh polygons and path nodes.
     ExteriorNav,
 }
 
@@ -230,6 +230,19 @@ fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, tier: Ti
                     }
                     for v in &n.vertices {
                         grow(&mut bb, v.x, v.y);
+                    }
+                }
+            }
+            Layer::Paths if tier == Tier::ExteriorNav => {
+                for n in &scene.path_nodes {
+                    if in_band(n.position.z, band) {
+                        grow(&mut bb, n.position.x, n.position.y);
+                    }
+                }
+                for l in &scene.path_links {
+                    if in_band(l.from.z, band) || in_band(l.to.z, band) {
+                        grow(&mut bb, l.from.x, l.from.y);
+                        grow(&mut bb, l.to.x, l.to.y);
                     }
                 }
             }
