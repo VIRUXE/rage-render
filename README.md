@@ -118,6 +118,13 @@ A `RenderPart` carries a drawable, a transform applied to all of its models
 and an optional per-bone pose selected by each model's bone index, so any
 composite of drawables can be rendered the same way.
 
+A part may also name a `diffuse_override`: a texture drawn instead of the
+diffuse on every geometry whose shader binds one under `DiffuseSampler`,
+which is how a ped component takes the texture its variation picked
+(CodeWalker's `diffOverride`). `TextureSet::alias(name, target)` makes a
+name resolve to another texture's image ahead of every layer, so a
+vehicle's `*_sign_1` livery reference can be pointed at `*_sign_3`.
+
 ### Materials
 
 Each geometry is drawn the way its shader's RAGE render bucket says: bucket
