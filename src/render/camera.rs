@@ -20,13 +20,57 @@ pub(crate) fn fit_radius(bounds: &DrawableBounds) -> f32 {
     }
 }
 
-/// Builds the view-projection matrix that frames `bounds` from `view`.
+/// Builds the view-projection matrix that frames `bounds` from `view`, for
+/// a model facing +Y (the world's forward axis).
 ///
 /// The world is Z-up with +Y forward. Returns the combined matrix, the eye
 /// position and the normalized light direction.
 pub(crate) fn camera_for(
     bounds: &DrawableBounds,
     view: View,
+    aspect: f32,
+    fov_deg: f32,
+    margin: f32,
+) -> (Mat4, Vec3, Vec3) {
+    camera_for_facing(bounds, view, 1.0, aspect, fov_deg, margin)
+}
+
+/// The direction from the model's centre toward the eye for `view`, on a
+/// model whose front points along `forward` on the Y axis (`1.0` or `-1.0`).
+///
+/// A relative view is an azimuth measured clockwise from the front as seen
+/// from above (so `90` is the model's own right side) and an elevation above
+/// the horizon. `Top` and `Iso` are world-fixed.
+pub(crate) fn eye_direction(view: View, forward: f32) -> Vec3 {
+    let forward = if forward < 0.0 { -1.0 } else { 1.0 };
+    match view {
+        View::Top => Vec3::new(0.0, 0.0, 1.0),
+        View::Iso => Vec3::new(1.0, -1.0, 1.0).normalize(),
+        _ => {
+            let (azimuth, elevation) = view.angles().unwrap_or((0, 0));
+            let (sin_az, cos_az) = (azimuth as f32).to_radians().sin_cos();
+            let (sin_el, cos_el) = (elevation as f32).to_radians().sin_cos();
+            // The model's own axes: its front and its right-hand side.
+            let front = Vec3::new(0.0, forward, 0.0);
+            let right = Vec3::new(forward, 0.0, 0.0);
+            let mut direction = (front * cos_az + right * sin_az) * cos_el + Vec3::Z * sin_el;
+            // Snap the exact axes the named views promise.
+            for component in [&mut direction.x, &mut direction.y, &mut direction.z] {
+                if component.abs() < 1e-6 {
+                    *component = 0.0;
+                }
+            }
+            direction.normalize()
+        }
+    }
+}
+
+/// [`camera_for`] for a model facing `forward` on the Y axis: `1.0` for a
+/// vehicle, `-1.0` for a prop.
+pub(crate) fn camera_for_facing(
+    bounds: &DrawableBounds,
+    view: View,
+    forward: f32,
     aspect: f32,
     fov_deg: f32,
     margin: f32,
@@ -43,18 +87,19 @@ pub(crate) fn camera_for(
         distance /= aspect;
     }
 
-    let direction = match view {
-        View::Front => Vec3::new(0.0, 1.0, 0.0),
-        View::Back => Vec3::new(0.0, -1.0, 0.0),
-        View::Left => Vec3::new(-1.0, 0.0, 0.0),
-        View::Right => Vec3::new(1.0, 0.0, 0.0),
-        View::Top => Vec3::new(0.0, 0.0, 1.0),
-        View::Iso => Vec3::new(1.0, -1.0, 1.0),
-    }
-    .normalize();
+    let direction = eye_direction(view, forward);
 
     let eye = center + direction * distance;
-    let up = if view == View::Top { Vec3::Y } else { Vec3::Z };
+    // Looking straight down (or up), +Z is no longer a usable up vector: the
+    // model's front goes to the top of the image instead, as `Top` always
+    // put +Y there.
+    let up = if view == View::Top {
+        Vec3::Y
+    } else if direction.x.abs() < 1e-6 && direction.y.abs() < 1e-6 {
+        Vec3::new(0.0, if forward < 0.0 { -1.0 } else { 1.0 }, 0.0)
+    } else {
+        Vec3::Z
+    };
 
     let near = (distance - 2.0 * radius).max(0.01);
     let far = distance + 2.0 * radius;
@@ -124,6 +169,35 @@ mod tests {
                 "{view}: direction {unit:?} != {direction:?}"
             );
         }
+    }
+
+    /// The relative views turn with the model's facing: a prop's front is
+    /// seen from -Y and its right side from -X, while Top and Iso stay put.
+    #[test]
+    fn relative_views_follow_the_facing() {
+        let dir = |view, forward| eye_direction(view, forward);
+        assert_eq!(dir(View::Front, 1.0), Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(dir(View::Front, -1.0), Vec3::new(0.0, -1.0, 0.0));
+        assert_eq!(dir(View::Back, -1.0), Vec3::new(0.0, 1.0, 0.0));
+        assert_eq!(dir(View::Right, 1.0), Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(dir(View::Right, -1.0), Vec3::new(-1.0, 0.0, 0.0));
+        assert_eq!(dir(View::Left, -1.0), Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(dir(View::Top, -1.0), Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(dir(View::Iso, -1.0), Vec3::new(1.0, -1.0, 1.0).normalize());
+        assert_eq!(dir(View::Angle { azimuth: 90, elevation: 0 }, 1.0), dir(View::Right, 1.0));
+        assert_eq!(dir(View::Angle { azimuth: 180, elevation: 0 }, -1.0), dir(View::Back, -1.0));
+
+        // A front-right three-quarter view from a little above, on a vehicle.
+        let d = dir(View::Angle { azimuth: 30, elevation: 20 }, 1.0);
+        assert!(d.x > 0.0 && d.y > 0.0 && d.z > 0.0, "{d:?}");
+        assert!((d.length() - 1.0).abs() < 1e-5);
+        let expected = Vec3::new(30f32.to_radians().sin() * 20f32.to_radians().cos(), 30f32.to_radians().cos() * 20f32.to_radians().cos(), 20f32.to_radians().sin());
+        assert!((d - expected).length() < 1e-5, "{d:?} != {expected:?}");
+
+        // Straight down from an angle still produces a usable camera.
+        let (view_proj, _, _) = camera_for_facing(&bounds(), View::Angle { azimuth: 0, elevation: 90 }, -1.0, 1.0, 40.0, 1.1);
+        let p = ndc(&view_proj, Vec3::new(0.0, -0.5, 0.0));
+        assert!(p.w > 0.0 && p.y > 0.0, "a prop's front is at the top of a straight-down view: {p:?}");
     }
 
     /// The up vector: +Z is screen-up everywhere except Top, which uses +Y.

@@ -17,7 +17,13 @@ use raster::Framebuffer;
 
 pub use textures::TextureSet;
 
-/// One of the fixed camera angles a drawable can be previewed from.
+/// A camera angle a drawable can be previewed from: one of the six named
+/// views, or any azimuth and elevation in whole degrees from the model's
+/// front (see [`Facing`]): `0:0` is the front, `90:0` its right side,
+/// `180:0` the back, `0:90` straight down.
+///
+/// `Front`, `Back`, `Left`, `Right` and `Angle` are relative to the model's
+/// facing; `Top` and `Iso` are fixed world directions, as they always were.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Front,
@@ -26,20 +32,37 @@ pub enum View {
     Right,
     Top,
     Iso,
+    Angle { azimuth: i16, elevation: i16 },
 }
 
 impl View {
     pub const ALL: [View; 6] =
         [View::Front, View::Back, View::Left, View::Right, View::Top, View::Iso];
 
-    pub fn label(self) -> &'static str {
+    /// `front` … `iso`, or `a30e20` for an angle: the short form file names
+    /// and sheet labels use.
+    pub fn label(self) -> std::borrow::Cow<'static, str> {
         match self {
-            View::Front => "front",
-            View::Back => "back",
-            View::Left => "left",
-            View::Right => "right",
-            View::Top => "top",
-            View::Iso => "iso",
+            View::Front => "front".into(),
+            View::Back => "back".into(),
+            View::Left => "left".into(),
+            View::Right => "right".into(),
+            View::Top => "top".into(),
+            View::Iso => "iso".into(),
+            View::Angle { azimuth, elevation } => format!("a{azimuth}e{elevation}").into(),
+        }
+    }
+
+    /// The azimuth (clockwise from the model's front, seen from above) and
+    /// elevation of a view, in degrees, when it is relative to the model.
+    pub fn angles(self) -> Option<(i16, i16)> {
+        match self {
+            View::Front => Some((0, 0)),
+            View::Right => Some((90, 0)),
+            View::Back => Some((180, 0)),
+            View::Left => Some((270, 0)),
+            View::Angle { azimuth, elevation } => Some((azimuth, elevation)),
+            View::Top | View::Iso => None,
         }
     }
 }
@@ -48,22 +71,58 @@ impl std::str::FromStr for View {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        match value.to_ascii_lowercase().as_str() {
-            "front" => Ok(View::Front),
-            "back" => Ok(View::Back),
-            "left" => Ok(View::Left),
-            "right" => Ok(View::Right),
-            "top" => Ok(View::Top),
-            "iso" => Ok(View::Iso),
-            other => anyhow::bail!("unknown view '{other}'"),
+        let lower = value.trim().to_ascii_lowercase();
+        match lower.as_str() {
+            "front" => return Ok(View::Front),
+            "back" => return Ok(View::Back),
+            "left" => return Ok(View::Left),
+            "right" => return Ok(View::Right),
+            "top" => return Ok(View::Top),
+            "iso" => return Ok(View::Iso),
+            _ => {}
         }
+        // `AZ:EL`, or the `aAZeEL` label form so a label round-trips.
+        let (az, el) = if let Some((az, el)) = lower.split_once(':') {
+            (az.to_string(), el.to_string())
+        } else if let Some((az, el)) = lower.strip_prefix('a').and_then(|rest| rest.split_once('e')) {
+            (az.to_string(), el.to_string())
+        } else {
+            anyhow::bail!("unknown view '{value}' (front, back, left, right, top, iso, or AZIMUTH:ELEVATION in degrees)")
+        };
+        let parse = |s: &str, what: &str| -> Result<f64> {
+            let degrees: f64 = s.trim().parse().map_err(|_| anyhow::anyhow!("view '{value}': {what} '{s}' is not a number of degrees"))?;
+            if !degrees.is_finite() {
+                anyhow::bail!("view '{value}': {what} '{s}' is not a number of degrees");
+            }
+            Ok(degrees)
+        };
+        let azimuth = parse(&az, "azimuth")?.round().rem_euclid(360.0) as i16;
+        let elevation = parse(&el, "elevation")?.round();
+        if !(-90.0..=90.0).contains(&elevation) {
+            anyhow::bail!("view '{value}': elevation must be between -90 and 90 degrees");
+        }
+        Ok(View::Angle { azimuth, elevation: elevation as i16 })
     }
 }
 
 impl std::fmt::Display for View {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.label())
+        formatter.write_str(&self.label())
     }
+}
+
+/// Which way a model's front points, for the views that are relative to it.
+/// GTA V vehicles are modelled facing +Y and props (furniture, signs,
+/// screens) facing -Y; `Auto` tells them apart by whether any geometry uses
+/// a `vehicle_paint*.sps` shader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Facing {
+    #[default]
+    Auto,
+    /// The model faces +Y (vehicles).
+    PositiveY,
+    /// The model faces -Y (props).
+    NegativeY,
 }
 
 /// Everything the renderer needs beyond the model itself.
@@ -92,6 +151,9 @@ pub struct RenderOptions {
     /// apart (rpf-cli#4), instead of the pieces' shared bounding box. Stray
     /// islands are still drawn — they simply fall outside the frame.
     pub cluster_framing: bool,
+    /// Which way the model faces, for `Front`/`Back`/`Left`/`Right` and
+    /// `View::Angle`. See [`Facing`].
+    pub facing: Facing,
 }
 
 /// JOAAT hashes of the `vehicle_paint*.sps` shader files (CodeWalker's
@@ -122,6 +184,7 @@ impl Default for RenderOptions {
             margin: 1.1,
             paint: None,
             cluster_framing: true,
+            facing: Facing::Auto,
         }
     }
 }
@@ -153,6 +216,8 @@ pub struct RenderReport {
     /// one island instead of their shared bounds. Zero whenever framing was
     /// left alone, so a batch diff only moves on an actual behaviour change.
     pub framing_excluded_geometries: usize,
+    /// The facing the camera was placed for: +Y (vehicle) or -Y (prop).
+    pub faces_positive_y: bool,
 }
 
 /// One drawable in a composite render, with where to put it.
@@ -241,6 +306,7 @@ pub fn render_parts(
     let mut report = RenderReport::default();
     let mut geometries = Vec::new();
     let mut bounds = None;
+    let mut is_vehicle = false;
 
     let single_unmoved = parts.len() == 1
         && parts[0].transform.is_identity()
@@ -262,7 +328,18 @@ pub fn render_parts(
             bounds = Some(stored_or_computed);
         }
         geometries.extend(mesh::prepare(d, lod, &part.transform, part.bone_transforms, tex, o.paint, part.diffuse_override, &mut report));
+        if o.facing == Facing::Auto && !is_vehicle {
+            is_vehicle = lod.models.iter().flat_map(|m| m.geometries.iter())
+                .filter_map(|g| d.shader(g.shader_id))
+                .any(|s| is_vehicle_paint_shader(s.file_name_hash));
+        }
     }
+    let forward = match o.facing {
+        Facing::PositiveY => 1.0,
+        Facing::NegativeY => -1.0,
+        Facing::Auto => if is_vehicle { 1.0 } else { -1.0 },
+    };
+    report.faces_positive_y = forward > 0.0;
 
     let boxes = cluster::geometry_boxes(&geometries);
 
@@ -296,7 +373,7 @@ pub fn render_parts(
         if let Some(bounds) = &bounds {
             if !geometries.is_empty() {
                 let (view_proj, _eye, light) =
-                    camera::camera_for(bounds, view, aspect, o.fov_deg, o.margin);
+                    camera::camera_for_facing(bounds, view, forward, aspect, o.fov_deg, o.margin);
 
                 // Solid geometry first, in model order, so the depth buffer
                 // is complete before anything is blended over it.
@@ -634,9 +711,17 @@ mod tests {
         assert!(View::from_str("sideways").is_err());
 
         for view in View::ALL {
-            assert_eq!(View::from_str(view.label()).unwrap(), view);
+            assert_eq!(View::from_str(&view.label()).unwrap(), view);
             assert_eq!(view.to_string(), view.label());
         }
+        let angle = View::Angle { azimuth: 30, elevation: 20 };
+        assert_eq!(View::from_str("30:20").unwrap(), angle);
+        assert_eq!(angle.label(), "a30e20");
+        assert_eq!(View::from_str(&angle.label()).unwrap(), angle, "a label round-trips");
+        assert_eq!(View::from_str("-90:0").unwrap(), View::Angle { azimuth: 270, elevation: 0 }, "azimuths wrap");
+        assert_eq!(View::from_str("0:-45").unwrap(), View::Angle { azimuth: 0, elevation: -45 });
+        assert!(View::from_str("0:91").is_err(), "elevation past the pole");
+        assert!(View::from_str("sideways").is_err());
     }
 
     /// `paint` multiplies the diffuse of geometries drawn with a
@@ -748,7 +833,9 @@ mod tests {
                 shaders: vec![shader(Some("half_red"), 1), shader(Some("green"), 0)],
             },
         );
-        let options = RenderOptions { view: View::Front, lighting: false, ..options(64, 64) };
+        // Quads laid out for a +Y front camera: pin the facing so Auto's
+        // prop default cannot swap near and far.
+        let options = RenderOptions { view: View::Front, lighting: false, facing: Facing::PositiveY, ..options(64, 64) };
         let (image, _) = render_drawable(&drawable, &textures, &options).unwrap();
 
         let pixel = image.get_pixel(32, 32).0;
@@ -778,7 +865,7 @@ mod tests {
         );
         let background = [0, 0, 0, 255];
         let options =
-            RenderOptions { view: View::Front, lighting: false, background, ..options(64, 64) };
+            RenderOptions { view: View::Front, lighting: false, background, facing: Facing::PositiveY, ..options(64, 64) };
         let (image, _) = render_drawable(&drawable, &textures, &options).unwrap();
 
         // far green over black = (0,128,0); near red over that = (128,64,0).

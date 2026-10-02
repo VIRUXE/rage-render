@@ -87,6 +87,9 @@ textures.push_layer(&shared_textures);   // lower-priority fallback layer
 // `paint` tints geometries drawn with a vehicle_paint*.sps shader: the YFT
 // carries no body colour, the game applies it at runtime from carcols.
 let options = RenderOptions { view: View::Iso, paint: Some([200, 30, 30]), ..Default::default() };
+// Front/back/left/right are the model's own sides: vehicles face +Y, props
+// -Y, told apart by vehicle shaders unless `facing` says. Any angle works
+// too: `"30:20".parse::<View>()` is a front-right view from a little above.
 let rendered = render_views(&drawable, &textures, &options, &View::ALL)?;
 for (view, image, report) in rendered {
     println!("{view}: {} triangle(s), {} missing texture(s)", report.triangles, report.missing_textures.len());

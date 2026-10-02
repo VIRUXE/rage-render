@@ -15,7 +15,7 @@ pub use plan::{clip_tri_to_band, contour_levels, contour_segments, contour_step,
                rooms_stacked, scene_bounds, EntityMark, HeightField, Layer,
                Marker, NavClass, NavShape, PathLinkKind, PathLinkShape, PathNodeKind, PathNodeMark, PlanOptions,
                PlanReport, PortalShape, RoomShape, Scene, Tri, WaterQuadShape, FLOOR_BAND};
-pub use render::{is_vehicle_paint_shader, render_drawable, render_parts, render_views, RenderOptions,
+pub use render::{Facing, is_vehicle_paint_shader, render_drawable, render_parts, render_views, RenderOptions,
                  RenderPart, RenderReport, TextureSet, View, VEHICLE_PAINT_SPS};
 pub use sheet::{compose_sheet, sheet_layout, SheetItem, SheetOptions};
 pub use wasm::convert_to_gltf;
