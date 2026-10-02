@@ -141,3 +141,10 @@ impl Mesh {
         }
     }
 }
+
+pub(crate) const WATER_FILL: Rgba8 = [0x5B, 0xA8, 0xE0, 90];
+pub(crate) const WATER_STROKE: Rgba8 = [0x2F, 0x7F, 0xC2, 255];
+/// An invisible quad (`IsInvisible`): the game simulates but never draws it.
+pub(crate) const WATER_DASH: (f32, f32) = (4.0, 3.0);
+pub(crate) const TERRAIN_MINOR: Rgba8 = [0xC8, 0x9B, 0x6E, 255];
+pub(crate) const TERRAIN_MAJOR: Rgba8 = [0x9A, 0x6A, 0x3C, 255];

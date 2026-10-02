@@ -9,6 +9,7 @@
 
 mod cartography;
 mod canvas;
+mod contours;
 mod geometry;
 mod layers;
 mod palette;
@@ -27,6 +28,7 @@ use palette::{Facing, Mesh};
 use raster::RasterCanvas;
 use svg::SvgCanvas;
 
+pub use contours::{contour_levels, contour_segments, contour_step};
 pub use geometry::{clip_tri_to_band, quad_footprint, rooms_stacked, scene_bounds};
 
 /// A drawable layer of the plan. Layers are drawn bottom-up in this order.
@@ -40,11 +42,15 @@ pub enum Layer {
     Navmesh,
     /// Vehicle and pedestrian path nodes and the links between them.
     Paths,
+    /// The water quads of `water.xml`.
+    Water,
+    /// Height contours from the world heightmap.
+    Terrain,
 }
 
 impl Layer {
     /// Every layer, in declaration order.
-    pub const ALL: [Layer; 7] = [
+    pub const ALL: [Layer; 9] = [
         Layer::Rooms,
         Layer::Portals,
         Layer::Entities,
@@ -52,6 +58,8 @@ impl Layer {
         Layer::Drawable,
         Layer::Navmesh,
         Layer::Paths,
+        Layer::Water,
+        Layer::Terrain,
     ];
 
     /// The lowercase name used on the command line and in the legend.
@@ -64,6 +72,8 @@ impl Layer {
             Layer::Drawable => "drawable",
             Layer::Navmesh => "navmesh",
             Layer::Paths => "paths",
+            Layer::Water => "water",
+            Layer::Terrain => "terrain",
         }
     }
 }
@@ -185,6 +195,32 @@ pub struct Marker {
     pub label: String,
 }
 
+/// One water quad: an axis-aligned rectangle of water at `z`.
+#[derive(Debug, Clone, Copy)]
+pub struct WaterQuadShape {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+    pub z: f32,
+    /// The game simulates but never draws it; drawn as a dashed outline.
+    pub invisible: bool,
+}
+
+/// A regular grid of ground heights, row-major with row 0 at `y0`, from
+/// which the terrain layer draws contours. Cells with no ground may hold
+/// `NaN`; no contour crosses them.
+#[derive(Debug, Clone, Default)]
+pub struct HeightField {
+    pub x0: f32,
+    pub y0: f32,
+    pub step_x: f32,
+    pub step_y: f32,
+    pub width: usize,
+    pub height: usize,
+    pub z: Vec<f32>,
+}
+
 /// Everything the plan can draw, in world space.
 #[derive(Debug, Clone, Default)]
 pub struct Scene {
@@ -203,6 +239,8 @@ pub struct Scene {
     pub path_nodes: Vec<PathNodeMark>,
     pub path_links: Vec<PathLinkShape>,
     pub markers: Vec<Marker>,
+    pub water: Vec<WaterQuadShape>,
+    pub terrain: Option<HeightField>,
 }
 
 /// How to draw the plan.
@@ -271,10 +309,73 @@ pub(crate) struct Prepared {
     pub(crate) path_nodes: Vec<usize>,
     pub(crate) path_links: Vec<usize>,
     pub(crate) mesh: Vec<MeshPoly>,
+    pub(crate) water: Vec<usize>,
+    /// One entry per contour level drawn.
+    pub(crate) contours: Vec<ContourLevel>,
     /// Per enabled layer, how much of it is being drawn.
     pub(crate) counts: Vec<(Layer, usize)>,
     /// Entity set indices present among the drawn entities, ascending.
     pub(crate) sets: Vec<usize>,
+}
+
+/// One contour level, ready to draw.
+pub(crate) struct ContourLevel {
+    pub(crate) level: f32,
+    pub(crate) major: bool,
+    pub(crate) segments: Vec<[(f32, f32); 2]>,
+}
+
+/// The contour levels of `field` over the part of it inside `region`: the
+/// step is picked from the heights within the region (plus one cell each
+/// way, so the lines run to the edge), and only segments touching the
+/// region are kept.
+fn terrain_contours(field: &HeightField, region: [f32; 4], band: Option<(f32, f32)>) -> Vec<ContourLevel> {
+    let (w, h) = (field.width, field.height);
+    if w < 2 || h < 2 || field.z.len() < w * h || !(field.step_x > 0.0) || !(field.step_y > 0.0) {
+        return Vec::new();
+    }
+    let col = |x: f32| ((x - field.x0) / field.step_x).floor();
+    let row = |y: f32| ((y - field.y0) / field.step_y).floor();
+    let ix0 = (col(region[0]) - 1.0).max(0.0) as usize;
+    let iy0 = (row(region[1]) - 1.0).max(0.0) as usize;
+    let ix1 = ((col(region[2]) + 2.0).max(0.0) as usize).min(w);
+    let iy1 = ((row(region[3]) + 2.0).max(0.0) as usize).min(h);
+    if ix1 <= ix0 + 1 || iy1 <= iy0 + 1 {
+        return Vec::new();
+    }
+    let mut z = Vec::with_capacity((ix1 - ix0) * (iy1 - iy0));
+    for iy in iy0..iy1 {
+        z.extend_from_slice(&field.z[iy * w + ix0..iy * w + ix1]);
+    }
+    let cut = HeightField {
+        x0: field.x0 + ix0 as f32 * field.step_x,
+        y0: field.y0 + iy0 as f32 * field.step_y,
+        step_x: field.step_x,
+        step_y: field.step_y,
+        width: ix1 - ix0,
+        height: iy1 - iy0,
+        z,
+    };
+    let (lo, hi) = cut.z.iter().filter(|v| v.is_finite()).fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+    if lo > hi {
+        return Vec::new();
+    }
+    let (lo, hi) = match band {
+        Some((blo, bhi)) => (lo.max(blo), hi.min(bhi)),
+        None => (lo, hi),
+    };
+    let step = contours::contour_step(lo, hi);
+    let touches = |[a, b]: &[(f32, f32); 2]| {
+        a.0.max(b.0) >= region[0] && a.0.min(b.0) <= region[2] && a.1.max(b.1) >= region[1] && a.1.min(b.1) <= region[3]
+    };
+    contours::contour_levels(lo, hi, step)
+        .into_iter()
+        .map(|(level, major)| {
+            let segments = contours::contour_segments(&cut, level).into_iter().filter(touches).collect();
+            ContourLevel { level, major, segments }
+        })
+        .filter(|c| !c.segments.is_empty())
+        .collect()
 }
 
 /// The z-facing of a triangle, from its normal.
@@ -414,6 +515,21 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
     if enabled(Layer::Drawable) {
         mesh_polys(&scene.drawable, Mesh::Drawable, band, &mut mesh);
     }
+    let mut water = Vec::new();
+    if enabled(Layer::Water) {
+        for (i, q) in scene.water.iter().enumerate() {
+            let finite = [q.x0, q.y0, q.x1, q.y1, q.z].iter().all(|v| v.is_finite());
+            let meets = q.x0.min(q.x1) <= region[2] && q.x0.max(q.x1) >= region[0]
+                && q.y0.min(q.y1) <= region[3] && q.y0.max(q.y1) >= region[1];
+            if finite && meets && in_band(q.z, band) {
+                water.push(i);
+            }
+        }
+    }
+    let contours = match (&scene.terrain, enabled(Layer::Terrain)) {
+        (Some(field), true) => terrain_contours(field, region, band),
+        _ => Vec::new(),
+    };
 
     let counts: Vec<(Layer, usize)> = Layer::ALL
         .into_iter()
@@ -427,6 +543,8 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
                 Layer::Drawable => mesh.len() - collision_count,
                 Layer::Navmesh => navmesh.len(),
                 Layer::Paths => path_nodes.len(),
+                Layer::Water => water.len(),
+                Layer::Terrain => contours.len(),
             };
             (l, n)
         })
@@ -439,7 +557,7 @@ fn prepare(scene: &Scene, opts: &PlanOptions) -> anyhow::Result<Prepared> {
     let legend_rows = counts.iter().filter(|(_, n)| *n > 0).count() + sets.len();
     let layout = cartography::layout(region, opts.scale, legend_rows, scene.caption.len());
 
-    Ok(Prepared { region, layout, rooms, portals, entities, navmesh, path_nodes, path_links, mesh, counts, sets })
+    Ok(Prepared { region, layout, rooms, portals, entities, navmesh, path_nodes, path_links, mesh, water, contours, counts, sets })
 }
 
 /// The legend rows for what was drawn.
@@ -457,8 +575,17 @@ fn legend_rows(scene: &Scene, prep: &Prepared) -> Vec<LegendRow> {
                 Layer::Drawable => Mesh::Drawable.swatch(),
                 Layer::Navmesh => palette::NAV_INTERIOR_STROKE,
                 Layer::Paths => palette::PATH_ROAD,
+                Layer::Water => palette::WATER_STROKE,
+                Layer::Terrain => palette::TERRAIN_MAJOR,
             },
-            text: format!("{} {n}", layer.name()),
+            text: match layer {
+                // The step tells the reader what a line means.
+                Layer::Terrain => match contour_step_of(prep) {
+                    Some(step) => format!("terrain {n} @ {step:.0} m"),
+                    None => format!("terrain {n}"),
+                },
+                _ => format!("{} {n}", layer.name()),
+            },
         })
         .collect();
     for set in &prep.sets {
@@ -466,6 +593,14 @@ fn legend_rows(scene: &Scene, prep: &Prepared) -> Vec<LegendRow> {
         rows.push(LegendRow { swatch: palette::hue(*set), text: name });
     }
     rows
+}
+
+/// The interval between the contour levels drawn, from the first two.
+fn contour_step_of(prep: &Prepared) -> Option<f32> {
+    match prep.contours.as_slice() {
+        [a, b, ..] => Some(b.level - a.level),
+        _ => None,
+    }
 }
 
 /// Draws the whole plan onto `canvas`, which must be the size `prep`'s
@@ -482,6 +617,10 @@ fn draw(prep: Prepared, scene: &Scene, opts: &PlanOptions, canvas: &mut dyn Canv
     // legend or the edge of the page.
     canvas.clip(Some((l.map.x, l.map.y, l.map.w, l.map.h)));
     cartography::draw_grid(canvas, &l, prep.region);
+
+    // The ground first, the water on it, then everything built on either.
+    layers::terrain(&prep, canvas);
+    layers::water(scene, &prep, canvas);
 
     if let Some(underlay) = layers::mesh_underlay(&prep) {
         canvas.image(l.map.x, l.map.y, &underlay);
@@ -611,6 +750,58 @@ mod tests {
         let p = img.get_pixel(cx as u32, cy as u32).0;
         assert!(p[1] > p[0] && p[1] > p[2], "navmesh centroid is not greenish: {p:?}");
         assert_eq!(report.drawn.iter().find(|(l, _)| *l == Layer::Navmesh).map(|(_, n)| *n), Some(1));
+    }
+
+    /// A pond over a slope: the quad is filled blue, the slope is contoured
+    /// at a round step, and both are counted and listed in the legend.
+    #[test]
+    fn water_and_terrain_are_drawn_counted_and_listed() {
+        // z rises 0..60 m across 7 columns, 10 m per column, 4 rows.
+        let z: Vec<f32> = (0..4).flat_map(|_| (0..7).map(|ix| ix as f32 * 10.0)).collect();
+        let scene = Scene {
+            title: "slope".into(),
+            water: vec![
+                WaterQuadShape { x0: 10.0, y0: 5.0, x1: 20.0, y1: 15.0, z: 12.0, invisible: false },
+                WaterQuadShape { x0: 40.0, y0: 5.0, x1: 50.0, y1: 15.0, z: 12.0, invisible: true },
+                WaterQuadShape { x0: 500.0, y0: 500.0, x1: 600.0, y1: 600.0, z: 0.0, invisible: false },
+            ],
+            terrain: Some(HeightField { x0: 0.0, y0: 0.0, step_x: 10.0, step_y: 10.0, width: 7, height: 4, z }),
+            ..Default::default()
+        };
+        let opts = PlanOptions { region: Some([0.0, 0.0, 60.0, 30.0]), scale: 10.0, ..Default::default() };
+        let (img, report) = plan_png(&scene, &opts).expect("a plan");
+
+        let count = |layer: Layer| report.drawn.iter().find(|(l, _)| *l == layer).map(|(_, n)| *n);
+        assert_eq!(count(Layer::Water), Some(2), "the far quad is outside the region");
+        // 0..60 m at the 5 m step: 5 10 .. 55, eleven levels.
+        assert_eq!(count(Layer::Terrain), Some(11));
+
+        let layout = cartography::layout(report.region, 10.0, 2, 0);
+        let (cx, cy) = layout.transform.to_px(17.5, 10.0); // between the 15 and 20 m contours
+        let p = img.get_pixel(cx as u32, cy as u32).0;
+        assert!(p[2] > p[0] && p[2] > p[1], "the pond is not blueish: {p:?}");
+        // The 20 m contour runs down x = 20; a pixel on it is brown, not white.
+        let (lx, ly) = layout.transform.to_px(20.0, 25.0);
+        let on_line = (-1..=1).any(|dx| {
+            let q = img.get_pixel((lx as i32 + dx) as u32, ly as u32).0;
+            q[0] > q[2] && q[0] < 250
+        });
+        assert!(on_line, "no contour at x = 20");
+
+        let (svg, _) = plan_svg(&scene, &opts).expect("a plan");
+        assert!(svg.contains("water 2"), "no water legend row");
+        assert!(svg.contains("terrain 11 @ 5 m"), "no terrain legend row");
+        assert!(svg.contains("stroke-dasharray"), "the invisible quad is not dashed");
+    }
+
+    #[test]
+    fn scene_bounds_frame_water_when_nothing_else_is_there() {
+        let scene = Scene {
+            water: vec![WaterQuadShape { x0: 10.0, y0: 5.0, x1: 20.0, y1: 15.0, z: 0.0, invisible: false }],
+            ..Default::default()
+        };
+        assert_eq!(scene_bounds(&scene, &Layer::ALL, None), Some([10.0, 5.0, 20.0, 15.0]));
+        assert_eq!(scene_bounds(&scene, &[Layer::Terrain], None), None, "a height field never frames a page");
     }
 
     #[test]

@@ -233,6 +233,14 @@ fn bounds_of(scene: &Scene, layers: &[Layer], band: Option<(f32, f32)>, tier: Ti
                     }
                 }
             }
+            Layer::Water if tier == Tier::ExteriorNav => {
+                for q in &scene.water {
+                    if in_band(q.z, band) {
+                        grow(&mut bb, q.x0, q.y0);
+                        grow(&mut bb, q.x1, q.y1);
+                    }
+                }
+            }
             Layer::Paths if tier == Tier::ExteriorNav => {
                 for n in &scene.path_nodes {
                     if in_band(n.position.z, band) {

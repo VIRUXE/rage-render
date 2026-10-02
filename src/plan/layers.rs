@@ -199,3 +199,31 @@ pub(crate) fn markers(scene: &Scene, prep: &Prepared, canvas: &mut dyn Canvas, l
         }
     }
 }
+
+/// Water quads: a translucent fill with an outline, dashed and unfilled
+/// when the game marks the quad invisible.
+pub(crate) fn water(scene: &Scene, prep: &Prepared, canvas: &mut dyn Canvas) {
+    let t = &prep.layout.transform;
+    for quad in prep.water.iter().map(|i| &scene.water[*i]) {
+        let (x0, y0) = t.to_px(quad.x0, quad.y0);
+        let (x1, y1) = t.to_px(quad.x1, quad.y1);
+        let pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
+        if quad.invisible {
+            canvas.stroke_polygon(&pts, palette::WATER_STROKE, 1.0, Some(palette::WATER_DASH));
+        } else {
+            canvas.fill_polygon(&pts, palette::WATER_FILL);
+            canvas.stroke_polygon(&pts, palette::WATER_STROKE, 1.0, None);
+        }
+    }
+}
+
+/// Height contours, every fifth level heavier.
+pub(crate) fn terrain(prep: &Prepared, canvas: &mut dyn Canvas) {
+    let t = &prep.layout.transform;
+    for level in &prep.contours {
+        let (colour, width) = if level.major { (palette::TERRAIN_MAJOR, 1.5) } else { (palette::TERRAIN_MINOR, 1.0) };
+        for [a, b] in &level.segments {
+            canvas.line(t.to_px(a.0, a.1), t.to_px(b.0, b.1), colour, width, None);
+        }
+    }
+}

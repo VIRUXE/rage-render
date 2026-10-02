@@ -44,7 +44,9 @@ one picture. `compose_sheet` tiles labelled images into a grid, and
 
 `plan_png` and `plan_svg` draw a GTA V interior from above as a floor plan:
 rooms and portals, entity dots, the collision and drawable meshes as a
-shaded underlay, and the navmesh, on a page with a grid, axes, a scale bar, a
+shaded underlay, the navmesh and path nodes, water quads and height contours
+(`Layer::Water`, `Layer::Terrain`: a `HeightField` is contoured by marching
+squares at a round step), on a page with a grid, axes, a scale bar, a
 north arrow and a legend.
 Labels are monospace text sized to the bitmap font's advance, so an SVG
 plan's text lines up with the same plan's PNG.
@@ -170,7 +172,8 @@ src/
   render/raster.rs   the triangle rasteriser, depth buffer, alpha test and blending
   render/textures.rs texture lookup through the layered TextureSet
   plan/mod.rs        Scene / PlanOptions / PlanReport, plan_png and plan_svg
-  plan/layers.rs     drawing the mesh underlay, navmesh, rooms, portals, entities, markers
+  plan/layers.rs     drawing the mesh underlay, water, terrain contours, navmesh, paths, rooms, portals, entities, markers
+  plan/contours.rs   marching-squares contours over a height field
   plan/cartography.rs page layout, grid steps, scale bar, legend, label placement
   plan/geometry.rs   world -> page transform, z-band clipping, scene bounds
   plan/canvas.rs     the Canvas trait both plan backends implement
