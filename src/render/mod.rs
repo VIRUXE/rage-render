@@ -168,17 +168,24 @@ pub struct RenderPart<'a> {
     /// Per-bone pose applied before `transform`, indexed by each model's
     /// bone index; empty leaves every model where its vertices are.
     pub bone_transforms: &'a [Mat4],
+    /// A texture name that replaces the diffuse of every geometry whose
+    /// shader has a `DiffuseSampler` parameter — how a ped component takes
+    /// the texture its variation picked (CodeWalker's `diffOverride` in
+    /// `Renderer.RenderDrawable`, applied only where the parameter hash is
+    /// `DiffuseSampler`). Geometries whose shader binds its diffuse under
+    /// another name keep their own.
+    pub diffuse_override: Option<&'a str>,
 }
 
 impl<'a> RenderPart<'a> {
     pub fn new(drawable: &'a Drawable) -> Self {
-        Self { drawable, transform: Mat4::identity(), bone_transforms: &[] }
+        Self { drawable, transform: Mat4::identity(), bone_transforms: &[], diffuse_override: None }
     }
 }
 
 impl<'a> From<rage_formats::yft::FragmentPart<'a>> for RenderPart<'a> {
     fn from(part: rage_formats::yft::FragmentPart<'a>) -> Self {
-        Self { drawable: part.drawable, transform: part.transform, bone_transforms: part.bone_transforms }
+        Self { drawable: part.drawable, transform: part.transform, bone_transforms: part.bone_transforms, diffuse_override: None }
     }
 }
 
@@ -254,7 +261,7 @@ pub fn render_parts(
             report.bounds_computed = was_computed;
             bounds = Some(stored_or_computed);
         }
-        geometries.extend(mesh::prepare(d, lod, &part.transform, part.bone_transforms, tex, o.paint, &mut report));
+        geometries.extend(mesh::prepare(d, lod, &part.transform, part.bone_transforms, tex, o.paint, part.diffuse_override, &mut report));
     }
 
     let boxes = cluster::geometry_boxes(&geometries);
@@ -661,6 +668,37 @@ mod tests {
         assert_eq!(render(rage_joaat("vehicle_tire.sps")), [255, 255, 255, 255], "other shaders are untouched");
         assert!(is_vehicle_paint_shader(rage_joaat("vehicle_paint4_enveff.sps")));
         assert!(!is_vehicle_paint_shader(rage_joaat("vehicle_mesh.sps")));
+    }
+
+    /// A part's `diffuse_override` replaces the diffuse of geometries whose
+    /// shader binds one under `DiffuseSampler`; a geometry bound under
+    /// another parameter name, and one with no diffuse at all, are left as
+    /// they are. A missing override is reported like any missing texture.
+    #[test]
+    fn diffuse_override_replaces_only_diffuse_sampler_textures() {
+        let vertices = quad_vertices();
+        let mut textures = TextureSet::new();
+        textures.push_layer(&[solid_texture("white", [255, 255, 255, 255]), solid_texture("uppr_diff_000_b_whi", [0, 255, 0, 255])]);
+        let options = RenderOptions { view: View::Front, lighting: false, ..options(64, 64) };
+
+        let render = |shader: ShaderFx, override_: Option<&str>| {
+            let drawable = drawable(
+                vec![geometry(&vertices, quad_indices(), 0)],
+                ShaderGroup { textures: Vec::new(), shaders: vec![shader] },
+            );
+            let parts = [RenderPart { diffuse_override: override_, ..RenderPart::new(&drawable) }];
+            let mut out = render_parts(&parts, &textures, &options, &[View::Front]).unwrap();
+            let (_, image, report) = out.remove(0);
+            (image.get_pixel(32, 32).0, report.missing_textures)
+        };
+
+        assert_eq!(render(shader(Some("white"), 0), None).0, [255, 255, 255, 255]);
+        assert_eq!(render(shader(Some("white"), 0), Some("uppr_diff_000_b_whi")).0, [0, 255, 0, 255], "the override wins");
+        let mut other_sampler = shader(Some("white"), 0);
+        other_sampler.parameters[0].name_hash = rage_formats::ydd::TEXTURE_SAMPLER;
+        assert_eq!(render(other_sampler, Some("uppr_diff_000_b_whi")).0, [255, 255, 255, 255], "only DiffuseSampler is overridden");
+        let (_, missing) = render(shader(Some("white"), 0), Some("uppr_diff_000_c_whi"));
+        assert_eq!(missing, vec!["uppr_diff_000_c_whi".to_string()], "a missing override is reported by its name");
     }
 
     /// Render bucket 1 (alpha) blends, bucket 3 (cutout) discards below half

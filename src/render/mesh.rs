@@ -57,8 +57,13 @@ pub(crate) struct PreparedGeometry<'a> {
 /// not skinned). Positions and normals are transformed in place so the
 /// rasterizer never needs to know.
 ///
+/// `diffuse_override` names the texture drawn instead of the diffuse on
+/// every geometry whose shader has a `DiffuseSampler` parameter (see
+/// `RenderPart::diffuse_override`).
+///
 /// Geometries without a vertex or index buffer — and triangles whose indices
 /// fall outside the vertex buffer — are dropped rather than failing the render.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare<'a>(
     d: &Drawable,
     lod: &DrawableLod,
@@ -66,6 +71,7 @@ pub(crate) fn prepare<'a>(
     bone_transforms: &[Mat4],
     tex: &'a TextureSet,
     paint: Option<[u8; 3]>,
+    diffuse_override: Option<&str>,
     report: &mut RenderReport,
 ) -> Vec<PreparedGeometry<'a>> {
     let paint_tint = paint.map(|rgb| rgb.map(|channel| channel as f32 / 255.0));
@@ -107,7 +113,9 @@ pub(crate) fn prepare<'a>(
                 continue;
             }
 
-            let texture = match d.diffuse_texture_name(geometry.shader_id) {
+            let overridden = diffuse_override
+                .filter(|_| d.texture_parameter(geometry.shader_id, rage_formats::ydd::DIFFUSE_SAMPLER).is_some());
+            let texture = match overridden.or_else(|| d.diffuse_texture_name(geometry.shader_id)) {
                 Some(name) => match tex.get(name) {
                     Some(image) => Some(image),
                     None => {
@@ -241,7 +249,7 @@ mod tests {
         let mut report = RenderReport::default();
         let textures = TextureSet::new();
 
-        let prepared = prepare(&d, &d.lods[0], &transform, &[], &textures, None, &mut report);
+        let prepared = prepare(&d, &d.lods[0], &transform, &[], &textures, None, None, &mut report);
 
         assert_eq!(prepared.len(), 1);
         let verts = &prepared[0].verts;
@@ -261,11 +269,11 @@ mod tests {
         let textures = TextureSet::new();
 
         let bound_to_one = triangle_drawable(1 << 24);
-        let prepared = prepare(&bound_to_one, &bound_to_one.lods[0], &Mat4::identity(), &pose, &textures, None, &mut report);
+        let prepared = prepare(&bound_to_one, &bound_to_one.lods[0], &Mat4::identity(), &pose, &textures, None, None, &mut report);
         assert_eq!(prepared[0].verts[0].position, Vec3::new(1.0, 5.0, 0.0));
 
         let out_of_range = triangle_drawable(7 << 24);
-        let prepared = prepare(&out_of_range, &out_of_range.lods[0], &Mat4::identity(), &pose, &textures, None, &mut report);
+        let prepared = prepare(&out_of_range, &out_of_range.lods[0], &Mat4::identity(), &pose, &textures, None, None, &mut report);
         assert_eq!(prepared[0].verts[0].position, Vec3::new(1.0, 0.0, 0.0));
     }
 }
