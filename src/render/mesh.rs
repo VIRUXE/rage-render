@@ -4,8 +4,29 @@
 use image::RgbaImage;
 
 use rage_formats::math::Mat4;
+use rage_formats::rage_joaat;
 use crate::render::{RenderReport, TextureSet};
 use rage_formats::ydd::{Drawable, DrawableLod, UnifiedVertex, VertexSemantic};
+
+/// Samplers that carry the colour when a shader has no `DiffuseSampler`.
+/// Terrain splats bind `TextureSampler_layer0`. Cloud hats bind `DensitySampler`.
+const ALBEDO_FALLBACK: &[&str] = &["texturesampler", "texturesampler_layer0", "densitysampler"];
+
+/// The texture name to draw for this shader: the diffuse, or the first
+/// fallback sampler the shader actually binds.
+fn albedo_texture_name<'a>(drawable: &'a Drawable, shader_id: u16) -> Option<&'a str> {
+    if let Some(name) = drawable.diffuse_texture_name(shader_id) {
+        return Some(name);
+    }
+    for sampler in ALBEDO_FALLBACK {
+        if let Some(name) = drawable.texture_parameter(shader_id, rage_joaat(sampler)) {
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
 
 /// How a geometry's diffuse alpha is applied, taken from the RAGE render
 /// bucket its shader is assigned to.
@@ -115,7 +136,7 @@ pub(crate) fn prepare<'a>(
 
             let overridden = diffuse_override
                 .filter(|_| d.texture_parameter(geometry.shader_id, rage_formats::ydd::DIFFUSE_SAMPLER).is_some());
-            let texture = match overridden.or_else(|| d.diffuse_texture_name(geometry.shader_id)) {
+            let texture = match overridden.or_else(|| albedo_texture_name(d, geometry.shader_id)) {
                 Some(name) => match tex.get(name) {
                     Some(image) => Some(image),
                     None => {
