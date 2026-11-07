@@ -68,6 +68,40 @@ pub(crate) struct PreparedGeometry<'a> {
     pub blend: BlendMode,
     /// Per-channel multiplier (0..=1) applied to the sampled diffuse.
     pub tint: Option<[f32; 3]>,
+    /// Per-vertex multiplier from a tint palette (`*_tnt` shaders), one
+    /// entry per vertex in `verts`; empty when the shader has no palette.
+    pub vertex_tint: Vec<[f32; 3]>,
+}
+
+/// Samplers that hold a tint palette (`<name>_pal`).
+const TINT_PALETTE_SAMPLERS: &[&str] = &["tintpalettesampler", "texturesamplerdiffpal"];
+
+/// Tree shaders that pick their palette column from the second vertex
+/// colour instead of the first: trees_tnt, trees_normal_spec_tnt,
+/// trees_normal_diffspec_tnt.
+const TREE_TINT_SPS: [u32; 3] = [3334613197, 1229591973, 2245870123];
+
+/// The palette colour each vertex of a `*_tnt` geometry is tinted by, as
+/// the game does it: column from the vertex colour's blue channel, row from
+/// the entity's tint index (0, the default, for a lone model). Empty when
+/// the shader binds no palette or the palette did not load.
+fn palette_tint(d: &Drawable, shader_id: u16, verts: &[UnifiedVertex], tex: &TextureSet, report: &mut RenderReport) -> Vec<[f32; 3]> {
+    let Some(name) = TINT_PALETTE_SAMPLERS.iter().find_map(|s| d.texture_parameter(shader_id, rage_joaat(s)).filter(|n| !n.is_empty())) else { return Vec::new() };
+    let Some(palette) = tex.get(name) else {
+        report.missing_textures.push(name.to_string());
+        return Vec::new();
+    };
+    let width = palette.width();
+    if width == 0 || palette.height() == 0 {
+        return Vec::new();
+    }
+    let second = d.shader(shader_id).is_some_and(|s| TREE_TINT_SPS.contains(&s.file_name_hash));
+    verts.iter().map(|v| {
+        let blue = if second { v.color1[2] } else { v.color0[2] };
+        let column = ((blue as u32 * width) / 255).min(width - 1);
+        let p = palette.get_pixel(column, 0).0;
+        [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0]
+    }).collect()
 }
 
 /// Decodes every geometry of `lod`, resolving diffuse textures against `tex`
@@ -177,7 +211,8 @@ pub(crate) fn prepare<'a>(
             report.triangles += indices.len() / 3;
             report.geometries += 1;
 
-            prepared.push(PreparedGeometry { verts, indices, texture, has_normals, blend, tint });
+            let vertex_tint = palette_tint(d, geometry.shader_id, &verts, tex, report);
+            prepared.push(PreparedGeometry { verts, indices, texture, has_normals, blend, tint, vertex_tint });
         }
     }
 

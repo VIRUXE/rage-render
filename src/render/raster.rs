@@ -40,6 +40,8 @@ struct Projected {
     uv: Vec2,
     normal: Vec3,
     color: [f32; 3],
+    /// Tint palette colour at this vertex, white when there is none.
+    palette: [f32; 3],
 }
 
 /// Rasterizes every triangle of `g` into `fb`, in index order.
@@ -92,6 +94,7 @@ pub(crate) fn draw_triangle(
                 vertex.color0[1] as f32 / 255.0,
                 vertex.color0[2] as f32 / 255.0,
             ],
+            palette: g.vertex_tint.get(*index as usize).copied().unwrap_or([1.0; 3]),
         });
     }
 
@@ -231,6 +234,11 @@ fn raster_triangle(
                 texel[0] *= tint[0];
                 texel[1] *= tint[1];
                 texel[2] *= tint[2];
+            }
+            if !g.vertex_tint.is_empty() {
+                for (channel, value) in texel.iter_mut().take(3).enumerate() {
+                    *value *= l[0] * v[0].palette[channel] + l[1] * v[1].palette[channel] + l[2] * v[2].palette[channel];
+                }
             }
             let coverage = match g.blend {
                 BlendMode::Opaque => 1.0,
@@ -487,6 +495,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -513,6 +522,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
         let far = PreparedGeometry {
             verts: far_verts,
@@ -521,6 +531,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let identity = Mat4::identity();
@@ -556,6 +567,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -586,6 +598,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Cutout,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -606,6 +619,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -627,6 +641,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Blend,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, [0, 0, 255, 255]);
@@ -651,6 +666,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Blend,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, [0, 0, 0, 0]);
@@ -676,6 +692,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Blend,
             tint: None,
+            vertex_tint: Vec::new(),
         };
         let far = PreparedGeometry {
             verts: far_verts,
@@ -684,6 +701,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         // A translucent surface drawn first must not block an opaque one
@@ -709,6 +727,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
         let far = PreparedGeometry {
             verts: far_verts,
@@ -717,6 +736,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Blend,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -756,6 +776,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
         let right = PreparedGeometry {
             verts: right_verts,
@@ -764,6 +785,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let identity = Mat4::identity();
@@ -794,6 +816,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -820,6 +843,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -842,6 +866,7 @@ mod tests {
             has_normals: false,
             blend: BlendMode::Opaque,
             tint: None,
+            vertex_tint: Vec::new(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);

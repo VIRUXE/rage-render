@@ -755,6 +755,39 @@ mod tests {
         assert!(!is_vehicle_paint_shader(rage_joaat("vehicle_mesh.sps")));
     }
 
+    /// A `*_tnt` shader multiplies its diffuse by the tint palette texel in
+    /// row 0 whose column is the vertex colour's blue channel; a shader with
+    /// no palette, or a palette that did not load, draws the plain diffuse.
+    #[test]
+    fn tint_palette_colours_by_vertex_blue() {
+        let mut palette = solid_texture("thing_pal", [0, 0, 0, 255]);
+        palette.width = 4;
+        palette.height = 2;
+        palette.stride = 16;
+        palette.pixel_data = [[255, 0, 0, 255], [9, 9, 9, 255], [9, 9, 9, 255], [0, 255, 0, 255], [0, 0, 255, 255], [0, 0, 255, 255], [0, 0, 255, 255], [0, 0, 255, 255]].concat();
+        let mut textures = TextureSet::new();
+        textures.push_layer(&[solid_texture("white", [255, 255, 255, 255]), palette]);
+        let options = RenderOptions { view: View::Front, lighting: false, vertex_colors: false, ..options(64, 64) };
+
+        let render = |blue: u8, palette_name: Option<&str>| {
+            let vertices: Vec<FixtureVertex> = quad_vertices().into_iter().map(|(p, n, uv, _)| (p, n, uv, [255, 255, blue, 255])).collect();
+            let mut tinted = shader(Some("white"), 0);
+            if let Some(name) = palette_name {
+                tinted.parameters.push(ShaderParameter { name_hash: rage_joaat("tintpalettesampler"), data_type: 0, data_pointer: 0, value: ShaderParameterValue::Texture { name: name.to_string(), name_hash: rage_joaat(name) } });
+            }
+            let drawable = drawable(vec![geometry(&vertices, quad_indices(), 0)], ShaderGroup { textures: Vec::new(), shaders: vec![tinted] });
+            let (image, report) = render_drawable(&drawable, &textures, &options).unwrap();
+            (image.get_pixel(32, 32).0, report.missing_textures)
+        };
+
+        assert_eq!(render(0, Some("thing_pal")).0, [255, 0, 0, 255], "blue 0 picks the first column of row 0");
+        assert_eq!(render(255, Some("thing_pal")).0, [0, 255, 0, 255], "blue 255 picks the last column");
+        assert_eq!(render(255, None).0, [255, 255, 255, 255], "no palette, no tint");
+        let (pixel, missing) = render(0, Some("absent_pal"));
+        assert_eq!(pixel, [255, 255, 255, 255], "a palette that did not load leaves the diffuse alone");
+        assert_eq!(missing, vec!["absent_pal".to_string()], "and is reported missing");
+    }
+
     /// A part's `diffuse_override` replaces the diffuse of geometries whose
     /// shader binds one under `DiffuseSampler`; a geometry bound under
     /// another parameter name, and one with no diffuse at all, are left as
