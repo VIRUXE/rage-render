@@ -4,6 +4,7 @@
 
 mod camera;
 mod cluster;
+mod gltf;
 mod mesh;
 mod raster;
 mod textures;
@@ -15,6 +16,7 @@ use rage_formats::math::Mat4;
 use rage_formats::ydd::{Drawable, LodLevel};
 use raster::Framebuffer;
 
+pub use gltf::{export_glb, glb_report, GlbOptions};
 pub use textures::TextureSet;
 
 /// A camera angle a drawable can be previewed from: one of the six named

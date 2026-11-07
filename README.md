@@ -4,7 +4,8 @@ Draws the drawables [`rage-formats`](https://github.com/VIRUXE/rage-formats)
 parses. A small CPU rasteriser with no GPU and no windowing, which is why it
 runs in a CLI, in CI, and under wasm: renders of a `.ydr`, `.ydd` or `.yft`
 with its textures from fixed camera angles, contact sheets of several
-renders, a bitmap font for labels, and a wasm-exposed glTF exporter.
+renders, a bitmap font for labels, binary glTF (`.glb`) export with
+textures, and a wasm-exposed mesh converter.
 
 [`rage-cli`](https://github.com/VIRUXE/rage-cli)'s `screenshot` and
 `textures --sheet` are thin wrappers over this crate.
@@ -157,10 +158,31 @@ or a batch of extracted textures, with a checkerboard behind anything that
 has alpha. `draw_text` and `text_width` use the `FONT_5X7` glyph table
 (Adafruit's `glcdfont` shapes) at any integer scale.
 
-### glTF for the browser
+### Binary glTF
 
-`convert_to_gltf(ydd_bytes, ytd_bytes)` returns a GLB with a
-`{"format": "unified_v2"}` envelope, and is exported through `wasm-bindgen`
+```rust
+use rage_render::{export_glb, glb_report, GlbOptions};
+
+let opts = GlbOptions { max_texture: 1024, ..Default::default() };
+let missing = glb_report(&parts, &textures, &opts).missing_textures; // cheap: decodes, encodes nothing
+let (glb, report) = export_glb(&parts, &textures, &opts)?;
+std::fs::write("model.glb", glb)?;
+```
+
+`export_glb` writes the geometry the rasteriser draws, prepared by the same
+code: every part placed by its transform, textures resolved through the
+`TextureSet`, `*_tnt` palettes as vertex colours, vehicle paint as a colour
+factor, and each shader's render bucket as the alpha mode (opaque, mask at
+0.5, or blend). Materials are double-sided, as the renders are. GTA's Z-up is
+rotated (never mirrored) to glTF's Y-up with the model's front on +Z, props
+and vehicles alike. Opaque textures are stored as JPEG and alpha-tested or
+blended ones as PNG, downscaled to `max_texture`. The files pass the Khronos
+glTF validator.
+
+### Mesh JSON for the browser
+
+`convert_to_gltf(ydd_bytes, ytd_bytes)` returns the raw meshes in a
+`{"format": "unified_v2"}` JSON envelope (no textures), and is exported through `wasm-bindgen`
 so a web page can turn a drawable into something a three.js viewer loads.
 The crate builds as `cdylib` and `rlib` for that reason.
 
@@ -172,6 +194,7 @@ src/
   render/camera.rs   framing: fit the view to the bounds, or to the dominant geometry cluster
   render/cluster.rs  finding that cluster when a model is really several far-apart pieces
   render/mesh.rs     drawable geometry -> prepared triangles with blend mode per geometry
+  render/gltf.rs     export_glb / glb_report / GlbOptions: the prepared geometry as a .glb
   render/raster.rs   the triangle rasteriser, depth buffer, alpha test and blending
   render/textures.rs texture lookup through the layered TextureSet
   plan/mod.rs        Scene / PlanOptions / PlanReport, plan_png and plan_svg
@@ -185,7 +208,7 @@ src/
   plan/palette.rs    every colour the plan uses
   sheet.rs           contact sheets
   font.rs            5x7 bitmap font
-  wasm.rs            glTF export and the wasm entry point
+  wasm.rs            mesh JSON and the wasm entry point
 ```
 
 ## License

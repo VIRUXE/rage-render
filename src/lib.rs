@@ -1,7 +1,8 @@
 //! Drawing RAGE drawables: a small software rasteriser producing PNG/JPG/WebP
 //! views of a `.ydr`/`.ydd`/`.yft` (with its textures), contact sheets of
 //! several renders, a bitmap font for labels, top-down floor plans of an
-//! interior, and a wasm-exposed glTF exporter. All parsing lives in
+//! interior, binary glTF (`.glb`) export with textures, and a wasm-exposed
+//! mesh-to-JSON converter. All parsing lives in
 //! `rage-formats`; this crate only draws.
 
 pub mod render;
@@ -15,7 +16,7 @@ pub use plan::{clip_tri_to_band, contour_levels, contour_segments, contour_step,
                rooms_stacked, scene_bounds, EntityMark, HeightField, Layer,
                Marker, NavClass, NavShape, PathLinkKind, PathLinkShape, PathNodeKind, PathNodeMark, PlanOptions,
                PlanReport, PortalShape, RoomShape, Scene, Tri, WaterQuadShape, FLOOR_BAND};
-pub use render::{Facing, is_vehicle_paint_shader, render_drawable, render_parts, render_views, RenderOptions,
+pub use render::{export_glb, glb_report, Facing, GlbOptions, is_vehicle_paint_shader, render_drawable, render_parts, render_views, RenderOptions,
                  RenderPart, RenderReport, TextureSet, View, VEHICLE_PAINT_SPS};
 pub use sheet::{compose_sheet, sheet_layout, SheetItem, SheetOptions};
 pub use wasm::convert_to_gltf;
