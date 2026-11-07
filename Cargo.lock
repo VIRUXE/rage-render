@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "rage-render"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
