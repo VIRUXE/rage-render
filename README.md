@@ -173,7 +173,16 @@ std::fs::write("model.glb", glb)?;
 code: every part placed by its transform, textures resolved through the
 `TextureSet`, `*_tnt` palettes as vertex colours, vehicle paint as a colour
 factor, and each shader's render bucket as the alpha mode (opaque, mask at
-0.5, or blend). Materials are double-sided, as the renders are. GTA's Z-up is
+0.5, or blend). Materials are double-sided, as the renders are.
+
+Materials follow the shader's own parameters, so a viewer lights the model
+the way the game does: `specularFalloffMult` becomes roughness (per texel
+from the spec map's alpha), `specularIntensityMult` and the `SpecSampler` map
+become `KHR_materials_specular`, `reflectivePower` becomes metalness, the
+`BumpSampler` map becomes a glTF normal map (green flipped from DirectX's
+convention), and emissive shaders glow through
+`KHR_materials_emissive_strength`. A shader with no specular parameters gets
+no highlight. The rasteriser itself ignores all of this. GTA's Z-up is
 rotated (never mirrored) to glTF's Y-up with the model's front on +Z, props
 and vehicles alike. Opaque textures are stored as JPEG and alpha-tested or
 blended ones as PNG, downscaled to `max_texture`. The files pass the Khronos
