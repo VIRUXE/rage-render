@@ -496,6 +496,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -523,6 +524,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
         let far = PreparedGeometry {
             verts: far_verts,
@@ -532,6 +534,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let identity = Mat4::identity();
@@ -568,6 +571,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -599,6 +603,7 @@ mod tests {
             blend: BlendMode::Cutout,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -620,6 +625,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -642,6 +648,7 @@ mod tests {
             blend: BlendMode::Blend,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, [0, 0, 255, 255]);
@@ -667,6 +674,7 @@ mod tests {
             blend: BlendMode::Blend,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, [0, 0, 0, 0]);
@@ -693,6 +701,7 @@ mod tests {
             blend: BlendMode::Blend,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
         let far = PreparedGeometry {
             verts: far_verts,
@@ -702,6 +711,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         // A translucent surface drawn first must not block an opaque one
@@ -728,6 +738,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
         let far = PreparedGeometry {
             verts: far_verts,
@@ -737,6 +748,7 @@ mod tests {
             blend: BlendMode::Blend,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -777,6 +789,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
         let right = PreparedGeometry {
             verts: right_verts,
@@ -786,6 +799,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let identity = Mat4::identity();
@@ -817,6 +831,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -844,6 +859,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);
@@ -867,6 +883,7 @@ mod tests {
             blend: BlendMode::Opaque,
             tint: None,
             vertex_tint: Vec::new(),
+            surface: crate::render::mesh::Surface::default(),
         };
 
         let mut fb = Framebuffer::new(options.width, options.height, options.background);

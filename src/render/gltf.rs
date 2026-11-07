@@ -174,15 +174,154 @@ fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
 
+/// GTA's tangent-space normal map as glTF expects it: X and Y from red and
+/// green (or from alpha and green when the map is packed that way, its blue
+/// near zero), Z rebuilt, and Y flipped from DirectX's convention to glTF's.
+fn gltf_normal_map(image: &RgbaImage) -> RgbaImage {
+    let count = (image.width() as f32 * image.height() as f32).max(1.0);
+    let mean_blue = image.pixels().map(|p| p.0[2] as f32).sum::<f32>() / count;
+    let packed = mean_blue < 128.0 && image.pixels().any(|p| p.0[3] < 250);
+    let mut out = RgbaImage::new(image.width(), image.height());
+    for (src, dst) in image.pixels().zip(out.pixels_mut()) {
+        let [r, g, _, a] = src.0;
+        let x = (if packed { a } else { r }) as f32 / 127.5 - 1.0;
+        let y = 1.0 - g as f32 / 127.5;
+        let z = (1.0 - x * x - y * y).max(0.0).sqrt();
+        let enc = |v: f32| ((v * 0.5 + 0.5) * 255.0).round().clamp(0.0, 255.0) as u8;
+        dst.0 = [enc(x), enc(y), enc(z), 255];
+    }
+    out
+}
+
+/// glTF roughness for a Blinn-Phong highlight exponent (`specularFalloffMult`):
+/// alpha = sqrt(2 / (n + 2)), roughness = sqrt(alpha). No exponent means no
+/// highlight to match, so a matte 0.9.
+fn roughness_of(exponent: f32) -> f32 {
+    if exponent <= 0.0 { 0.9 } else { (2.0 / (exponent + 2.0)).powf(0.25).clamp(0.05, 0.95) }
+}
+
+/// A metallic-roughness texture whose roughness follows the spec map's alpha
+/// (its glossiness) scaled by the shader's exponent; metallic is left to the factor.
+fn roughness_map(spec: &RgbaImage, exponent: f32) -> RgbaImage {
+    let mut out = RgbaImage::new(spec.width(), spec.height());
+    for (src, dst) in spec.pixels().zip(out.pixels_mut()) {
+        let gloss = src.0[3] as f32 / 255.0 * exponent;
+        dst.0 = [0, (roughness_of(gloss) * 255.0).round() as u8, 255, 255];
+    }
+    out
+}
+
+/// What a texture is used as, so one image can serve as several.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Use {
+    Base { alpha: bool },
+    Normal,
+    Spec,
+    Roughness(u32),
+}
+
+struct Textures {
+    images: json::JsonValue,
+    textures: json::JsonValue,
+    ids: HashMap<(usize, Use), usize>,
+}
+
+impl Textures {
+    /// The texture index for `image` used as `usage`, encoding it on first use.
+    fn get(&mut self, bin: &mut Bin, image: &RgbaImage, usage: Use, o: &GlbOptions) -> Result<usize> {
+        // Keyed by the decoded image's address: the same RgbaImage is shared by every geometry that names it.
+        let key = (image as *const RgbaImage as usize, usage);
+        if let Some(id) = self.ids.get(&key) {
+            return Ok(*id);
+        }
+        let (bytes, mime) = match usage {
+            Use::Base { alpha } => encode_texture(image, alpha, o)?,
+            Use::Normal => encode_texture(&gltf_normal_map(image), false, o)?,
+            Use::Spec => encode_texture(image, false, o)?,
+            Use::Roughness(exponent) => encode_texture(&roughness_map(image, f32::from_bits(exponent)), false, o)?,
+        };
+        let view = bin.view(&bytes, None);
+        let _ = self.images.push(json::object! { "bufferView": view, "mimeType": mime });
+        let _ = self.textures.push(json::object! { "source": self.images.len() - 1, "sampler": 0 });
+        self.ids.insert(key, self.textures.len() - 1);
+        Ok(self.textures.len() - 1)
+    }
+}
+
+fn note(used: &mut Vec<&'static str>, extension: &'static str) {
+    if !used.contains(&extension) {
+        used.push(extension);
+    }
+}
+
+/// The glTF material for one geometry: its diffuse, tint and alpha mode, and
+/// the shader's highlight, reflectivity, normal map and glow. Also says
+/// whether any texture needs the texture coordinates.
+fn material_json(g: &PreparedGeometry<'_>, blend_code: u8, tex: &mut Textures, bin: &mut Bin, used: &mut Vec<&'static str>, o: &GlbOptions) -> Result<(json::JsonValue, bool)> {
+    let s = &g.surface;
+    let base = match g.texture {
+        Some(image) => Some(tex.get(bin, image, Use::Base { alpha: blend_code != 0 && has_alpha(image) }, o)?),
+        None => None,
+    };
+    let tint = g.tint.unwrap_or([1.0, 1.0, 1.0]);
+    let level = if base.is_some() { 1.0 } else { UNTEXTURED_LINEAR };
+    let factor = [level * srgb_to_linear(tint[0]), level * srgb_to_linear(tint[1]), level * srgb_to_linear(tint[2]), 1.0];
+    let mut pbr = json::object! { "baseColorFactor": factor.to_vec(), "metallicFactor": s.reflect.clamp(0.0, 1.0), "roughnessFactor": roughness_of(s.spec_falloff) };
+    if let Some(t) = base {
+        pbr["baseColorTexture"] = json::object! { "index": t };
+    }
+    if let (Some(spec), true) = (s.spec, s.spec_falloff > 0.0) {
+        let id = tex.get(bin, spec, Use::Roughness(s.spec_falloff.to_bits()), o)?;
+        pbr["metallicRoughnessTexture"] = json::object! { "index": id };
+        pbr["roughnessFactor"] = 1.0.into();
+    }
+    let mut m = json::object! { "pbrMetallicRoughness": pbr, "doubleSided": true };
+    let mut ext = json::JsonValue::new_object();
+    // The highlight: its strength scales the dielectric reflectance. A shader
+    // with no specular parameters at all has none, as in the game.
+    if s.spec_intensity > 0.0 || s.spec.is_some() {
+        let k = if s.spec_intensity > 0.0 { s.spec_intensity.clamp(0.0, 2.0) } else { 1.0 };
+        let mut spec = json::object! { "specularColorFactor": vec![k, k, k] };
+        if let Some(map) = s.spec {
+            spec["specularColorTexture"] = json::object! { "index": tex.get(bin, map, Use::Spec, o)? };
+        }
+        ext["KHR_materials_specular"] = spec;
+    } else {
+        ext["KHR_materials_specular"] = json::object! { "specularFactor": 0.0 };
+    }
+    note(used, "KHR_materials_specular");
+    if let Some(normal) = s.normal {
+        let scale = if s.bumpiness > 0.0 { s.bumpiness.min(3.0) } else { 1.0 };
+        m["normalTexture"] = json::object! { "index": tex.get(bin, normal, Use::Normal, o)?, "scale": scale };
+    }
+    if let (Some(t), true) = (base, s.emissive > 0.0) {
+        m["emissiveTexture"] = json::object! { "index": t };
+        m["emissiveFactor"] = json::array![1.0, 1.0, 1.0];
+        if s.emissive > 1.0 {
+            ext["KHR_materials_emissive_strength"] = json::object! { "emissiveStrength": s.emissive.min(4.0) };
+            note(used, "KHR_materials_emissive_strength");
+        }
+    }
+    m["extensions"] = ext;
+    match blend_code {
+        1 => {
+            m["alphaMode"] = "MASK".into();
+            m["alphaCutoff"] = 0.5.into();
+        }
+        2 => m["alphaMode"] = "BLEND".into(),
+        _ => {}
+    }
+    Ok((m, base.is_some() || s.normal.is_some() || s.spec.is_some()))
+}
+
 fn write_glb(geometries: &[PreparedGeometry<'_>], forward: f32, o: &GlbOptions) -> Result<Vec<u8>> {
     let mut bin = Bin { data: Vec::new(), views: json::JsonValue::new_array(), accessors: json::JsonValue::new_array() };
-    let mut images = json::JsonValue::new_array();
-    let mut textures = json::JsonValue::new_array();
+    let mut tex = Textures { images: json::JsonValue::new_array(), textures: json::JsonValue::new_array(), ids: HashMap::new() };
     let mut materials = json::JsonValue::new_array();
     let mut primitives = json::JsonValue::new_array();
-    // Keyed by the decoded image's address: the same RgbaImage is shared by every geometry that names it.
-    let mut texture_ids: HashMap<(usize, bool), usize> = HashMap::new();
-    let mut material_ids: HashMap<(Option<usize>, u8, [u32; 3]), usize> = HashMap::new();
+    let mut used: Vec<&'static str> = Vec::new();
+    // Identical materials are written once.
+    let mut material_ids: HashMap<String, usize> = HashMap::new();
 
     for g in geometries {
         let blend_code = match g.blend {
@@ -190,47 +329,13 @@ fn write_glb(geometries: &[PreparedGeometry<'_>], forward: f32, o: &GlbOptions) 
             BlendMode::Cutout => 1,
             BlendMode::Blend | BlendMode::Decal => 2,
         };
-        let texture = match g.texture {
-            Some(image) => {
-                let keep_alpha = blend_code != 0 && has_alpha(image);
-                let key = (image as *const RgbaImage as usize, keep_alpha);
-                let id = match texture_ids.get(&key) {
-                    Some(id) => *id,
-                    None => {
-                        let (bytes, mime) = encode_texture(image, keep_alpha, o)?;
-                        let view = bin.view(&bytes, None);
-                        let _ = images.push(json::object! { "bufferView": view, "mimeType": mime });
-                        let _ = textures.push(json::object! { "source": images.len() - 1, "sampler": 0 });
-                        texture_ids.insert(key, textures.len() - 1);
-                        textures.len() - 1
-                    }
-                };
-                Some(id)
-            }
-            None => None,
-        };
-        let tint = g.tint.unwrap_or([1.0, 1.0, 1.0]);
-        let tint_key = tint.map(f32::to_bits);
-        let material = match material_ids.get(&(texture, blend_code, tint_key)) {
+        let (m, uses_uv) = material_json(g, blend_code, &mut tex, &mut bin, &mut used, o)?;
+        let text = m.dump();
+        let material = match material_ids.get(&text) {
             Some(id) => *id,
             None => {
-                let base = if texture.is_some() { 1.0 } else { UNTEXTURED_LINEAR };
-                let factor = [base * srgb_to_linear(tint[0]), base * srgb_to_linear(tint[1]), base * srgb_to_linear(tint[2]), 1.0];
-                let mut pbr = json::object! { "baseColorFactor": factor.to_vec(), "metallicFactor": 0.0, "roughnessFactor": 0.9 };
-                if let Some(t) = texture {
-                    pbr["baseColorTexture"] = json::object! { "index": t };
-                }
-                let mut m = json::object! { "pbrMetallicRoughness": pbr, "doubleSided": true };
-                match blend_code {
-                    1 => {
-                        m["alphaMode"] = "MASK".into();
-                        m["alphaCutoff"] = 0.5.into();
-                    }
-                    2 => m["alphaMode"] = "BLEND".into(),
-                    _ => {}
-                }
                 let _ = materials.push(m);
-                material_ids.insert((texture, blend_code, tint_key), materials.len() - 1);
+                material_ids.insert(text, materials.len() - 1);
                 materials.len() - 1
             }
         };
@@ -249,7 +354,7 @@ fn write_glb(geometries: &[PreparedGeometry<'_>], forward: f32, o: &GlbOptions) 
         if g.has_normals {
             attributes["NORMAL"] = bin.floats(&normals, 3, "VEC3", false).into();
         }
-        if texture.is_some() {
+        if uses_uv {
             attributes["TEXCOORD_0"] = bin.floats(&uvs, 2, "VEC2", false).into();
         }
         if g.vertex_tint.len() == g.verts.len() && !g.vertex_tint.is_empty() {
@@ -279,9 +384,12 @@ fn write_glb(geometries: &[PreparedGeometry<'_>], forward: f32, o: &GlbOptions) 
     if !materials.is_empty() {
         root["materials"] = materials;
     }
-    if !textures.is_empty() {
-        root["textures"] = textures;
-        root["images"] = images;
+    if !used.is_empty() {
+        root["extensionsUsed"] = used.into();
+    }
+    if !tex.textures.is_empty() {
+        root["textures"] = tex.textures;
+        root["images"] = tex.images;
         // Repeat wrapping, linear filtering with mipmaps, as the game samples.
         root["samplers"] = json::array![{ "magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497 }];
     }
@@ -322,6 +430,23 @@ mod tests {
         assert_eq!(to_gltf([0.0, 1.0, 0.0], 1.0), [0.0, 0.0, 1.0]);
         assert_eq!(to_gltf([0.0, 0.0, 1.0], -1.0), [0.0, 1.0, 0.0]);
         assert_eq!(to_gltf([0.0, 0.0, 1.0], 1.0), [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn glossier_highlights_are_smoother() {
+        assert_eq!(roughness_of(0.0), 0.9, "no highlight is matte");
+        assert!(roughness_of(200.0) < roughness_of(40.0));
+        assert!((roughness_of(40.0) - 0.467).abs() < 0.01);
+    }
+
+    /// A flat DirectX normal (128, 128, 255) stays flat; green is flipped.
+    #[test]
+    fn normal_maps_flip_green_and_keep_flat_flat() {
+        let mut image = RgbaImage::from_pixel(2, 1, image::Rgba([128, 128, 255, 255]));
+        image.put_pixel(1, 0, image::Rgba([128, 255, 128, 255]));
+        let out = gltf_normal_map(&image);
+        assert_eq!(out.get_pixel(0, 0).0[2], 255);
+        assert!(out.get_pixel(1, 0).0[1] < 10, "DirectX +Y is glTF -Y");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use image::RgbaImage;
 use rage_formats::math::Mat4;
 use rage_formats::rage_joaat;
 use crate::render::{RenderReport, TextureSet};
-use rage_formats::ydd::{Drawable, DrawableLod, UnifiedVertex, VertexSemantic};
+use rage_formats::ydd::{Drawable, DrawableLod, ShaderParameterValue, UnifiedVertex, VertexSemantic};
 
 /// Samplers that carry the colour when a shader has no `DiffuseSampler`.
 /// Terrain splats bind `TextureSampler_layer0`. Cloud hats bind `DensitySampler`.
@@ -71,6 +71,50 @@ pub(crate) struct PreparedGeometry<'a> {
     /// Per-vertex multiplier from a tint palette (`*_tnt` shaders), one
     /// entry per vertex in `verts`; empty when the shader has no palette.
     pub vertex_tint: Vec<[f32; 3]>,
+    /// How the surface takes light, from the shader's parameters. The
+    /// rasterizer ignores it; the glTF export turns it into a material.
+    pub surface: Surface<'a>,
+}
+
+/// A shader's lighting parameters: what `specularIntensityMult`,
+/// `specularFalloffMult`, `reflectivePower`, `emissiveMultiplier` and
+/// `bumpiness` hold, and the normal and specular maps it binds. Zero means
+/// the shader does not set the value.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Surface<'a> {
+    pub spec_intensity: f32,
+    /// Blinn-Phong exponent of the highlight: larger is glossier.
+    pub spec_falloff: f32,
+    pub reflect: f32,
+    pub emissive: f32,
+    pub bumpiness: f32,
+    /// `BumpSampler`: a tangent-space normal map.
+    pub normal: Option<&'a RgbaImage>,
+    /// `SpecSampler`: highlight colour in RGB, glossiness in alpha.
+    pub spec: Option<&'a RgbaImage>,
+}
+
+/// The first component of a vector parameter, by its lowercase name.
+fn vector_parameter(d: &Drawable, shader_id: u16, name: &str) -> Option<f32> {
+    let hash = rage_joaat(name);
+    d.shader(shader_id)?.parameters.iter().find_map(|p| match &p.value {
+        ShaderParameterValue::Vectors(v) if p.name_hash == hash => v.first().map(|v| v.x),
+        _ => None,
+    })
+}
+
+fn surface<'a>(d: &Drawable, shader_id: u16, tex: &'a TextureSet) -> Surface<'a> {
+    let value = |name: &str| vector_parameter(d, shader_id, name).filter(|v| v.is_finite()).unwrap_or(0.0);
+    let map = |sampler: &str| d.texture_parameter(shader_id, rage_joaat(sampler)).and_then(|name| tex.get(name));
+    Surface {
+        spec_intensity: value("specularintensitymult"),
+        spec_falloff: value("specularfalloffmult"),
+        reflect: value("reflectivepower"),
+        emissive: value("emissivemultiplier"),
+        bumpiness: value("bumpiness"),
+        normal: map("bumpsampler"),
+        spec: map("specsampler"),
+    }
 }
 
 /// Samplers that hold a tint palette (`<name>_pal`).
@@ -212,7 +256,8 @@ pub(crate) fn prepare<'a>(
             report.geometries += 1;
 
             let vertex_tint = palette_tint(d, geometry.shader_id, &verts, tex, report);
-            prepared.push(PreparedGeometry { verts, indices, texture, has_normals, blend, tint, vertex_tint });
+            let surface = surface(d, geometry.shader_id, tex);
+            prepared.push(PreparedGeometry { verts, indices, texture, has_normals, blend, tint, vertex_tint, surface });
         }
     }
 
