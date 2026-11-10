@@ -214,7 +214,17 @@ pub(crate) fn prepare<'a>(
 
             let overridden = diffuse_override
                 .filter(|_| d.texture_parameter(geometry.shader_id, rage_formats::ydd::DIFFUSE_SAMPLER).is_some());
-            let texture = match overridden.or_else(|| albedo_texture_name(d, geometry.shader_id)) {
+            let is_license_plate = d.shader_group.as_ref()
+                .and_then(|group| group.shaders.get(geometry.shader_id as usize))
+                .is_some_and(|shader| shader.parameters.iter().any(|parameter| {
+                    matches!(&parameter.value, ShaderParameterValue::Texture { name, .. } if name.eq_ignore_ascii_case("plate01"))
+                }));
+            let texture_name = if is_license_plate && tex.get("plate01").is_some() {
+                Some("plate01")
+            } else {
+                overridden.or_else(|| albedo_texture_name(d, geometry.shader_id))
+            };
+            let texture = match texture_name {
                 Some(name) => match tex.get(name) {
                     Some(image) => Some(image),
                     None => {
