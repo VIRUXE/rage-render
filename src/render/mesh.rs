@@ -28,6 +28,80 @@ fn albedo_texture_name<'a>(drawable: &'a Drawable, shader_id: u16) -> Option<&'a
     None
 }
 
+const MAT_DIFFUSE_COLOR: u32 = 0x185f_047c;
+const PAINT_LAYER_COUNT: u8 = 7;
+
+/// Selects the requested color for paint layer 1 and black for layer 2;
+/// all other paint layers retain their material appearance.
+/// The layer is encoded in the material's `matDiffuseColor` vector, not its
+/// shader name.
+fn vehicle_paint_tint(
+    shader: &rage_formats::ydd::ShaderFx,
+    paint: Option<[u8; 3]>,
+) -> Option<[f32; 3]> {
+    let paint = paint?;
+    let parameter = shader
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name_hash == MAT_DIFFUSE_COLOR)?;
+    let ShaderParameterValue::Vectors(values) = &parameter.value else {
+        return None;
+    };
+    let value = values.first()?;
+    if (value.x - 2.0).abs() > 0.0001 {
+        return None;
+    }
+    let layer = value.y.round();
+    if (value.y - layer).abs() > 0.0001 || !(1.0..=PAINT_LAYER_COUNT as f32).contains(&layer) {
+        return None;
+    }
+    match layer as u8 {
+        1 => Some(paint.map(|channel| channel as f32 / 255.0)),
+        2 => Some([0.0; 3]),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use rage_formats::math::Vec4;
+    use rage_formats::ydd::{ShaderFx, ShaderParameter};
+
+    fn shader(layer: f32) -> ShaderFx {
+        ShaderFx {
+            name_hash: 0,
+            file_name_hash: 0,
+            render_bucket: 0,
+            render_bucket_mask: 0,
+            parameter_count: 1,
+            texture_parameter_count: 0,
+            parameters: vec![ShaderParameter {
+                name_hash: MAT_DIFFUSE_COLOR,
+                data_type: 0,
+                data_pointer: 0,
+                value: ShaderParameterValue::Vectors(vec![Vec4::new(2.0, layer, 0.0, 0.0)]),
+            }],
+        }
+    }
+
+    #[test]
+    fn paint_selector_uses_primary_color_and_blacks_only_secondary() {
+        let paint = Some([200, 30, 10]);
+        assert_eq!(vehicle_paint_tint(&shader(1.0), paint), Some([200.0 / 255.0, 30.0 / 255.0, 10.0 / 255.0]));
+        assert_eq!(vehicle_paint_tint(&shader(2.0), paint), Some([0.0; 3]));
+        for layer in 3..=7 {
+            assert_eq!(vehicle_paint_tint(&shader(layer as f32), paint), None);
+        }
+    }
+
+    #[test]
+    fn paint_selector_ignores_unmarked_materials() {
+        assert_eq!(vehicle_paint_tint(&shader(0.0), Some([200, 30, 10])), None);
+        assert_eq!(vehicle_paint_tint(&shader(1.0), None), None);
+    }
+}
+
 /// How a geometry's diffuse alpha is applied, taken from the RAGE render
 /// bucket its shader is assigned to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,7 +247,6 @@ pub(crate) fn prepare<'a>(
     diffuse_override: Option<&str>,
     report: &mut RenderReport,
 ) -> Vec<PreparedGeometry<'a>> {
-    let paint_tint = paint.map(|rgb| rgb.map(|channel| channel as f32 / 255.0));
     let mut prepared = Vec::new();
 
     for model in &lod.models {
@@ -235,10 +308,7 @@ pub(crate) fn prepare<'a>(
             let blend = shader
                 .map(|shader| BlendMode::from_render_bucket(shader.render_bucket))
                 .unwrap_or(BlendMode::Opaque);
-            let tint = match shader {
-                Some(shader) if super::is_vehicle_paint_shader(shader.file_name_hash) => paint_tint,
-                _ => None,
-            };
+            let tint = shader.and_then(|shader| vehicle_paint_tint(shader, paint));
 
             let declares_normals = buffer
                 .declaration
