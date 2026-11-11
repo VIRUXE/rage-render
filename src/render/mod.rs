@@ -726,10 +726,10 @@ mod tests {
         assert!(View::from_str("sideways").is_err());
     }
 
-    /// `paint` multiplies the diffuse of geometries drawn with a
-    /// `vehicle_paint*.sps` shader and leaves every other shader alone.
+    /// Paint color follows the material selector: primary gets the chosen
+    /// color, secondary is black, and other layers are unchanged.
     #[test]
-    fn paint_tints_only_vehicle_paint_shaders() {
+    fn paint_uses_primary_color_and_blacks_only_secondary_layer() {
         let vertices = quad_vertices();
         let mut textures = TextureSet::new();
         textures.push_layer(&[solid_texture("white", [255, 255, 255, 255])]);
@@ -740,9 +740,19 @@ mod tests {
             ..options(64, 64)
         };
 
-        let render = |file_name_hash: u32| {
+        let render = |layer: Option<f32>| {
             let mut paint_shader = shader(Some("white"), 0);
-            paint_shader.file_name_hash = file_name_hash;
+            paint_shader.file_name_hash = rage_joaat("not_a_paint_shader.sps");
+            if let Some(layer) = layer {
+                paint_shader.parameters.push(rage_formats::ydd::ShaderParameter {
+                    name_hash: rage_joaat("matdiffusecolor"),
+                    data_type: 0,
+                    data_pointer: 0,
+                    value: rage_formats::ydd::ShaderParameterValue::Vectors(vec![
+                        rage_formats::math::Vec4::new(2.0, layer, 0.0, 0.0),
+                    ]),
+                });
+            }
             let drawable = drawable(
                 vec![geometry(&vertices, quad_indices(), 0)],
                 ShaderGroup { textures: Vec::new(), shaders: vec![paint_shader] },
@@ -750,9 +760,12 @@ mod tests {
             render_drawable(&drawable, &textures, &options).unwrap().0.get_pixel(32, 32).0
         };
 
-        assert_eq!(render(rage_joaat("vehicle_paint1.sps")), [255, 0, 0, 255], "paint shader takes the tint");
-        assert_eq!(render(rage_joaat("vehicle_paint9.sps")), [255, 0, 0, 255], "every paint variant counts");
-        assert_eq!(render(rage_joaat("vehicle_tire.sps")), [255, 255, 255, 255], "other shaders are untouched");
+        assert_eq!(render(Some(1.0)), [255, 0, 0, 255], "layer 1 takes the selected color");
+        assert_eq!(render(Some(2.0)), [0, 0, 0, 255], "secondary renders black");
+        for layer in 3..=7 {
+            assert_eq!(render(Some(layer as f32)), [255, 255, 255, 255], "layer {layer} retains its material appearance");
+        }
+        assert_eq!(render(None), [255, 255, 255, 255], "unmarked materials are untouched");
         assert!(is_vehicle_paint_shader(rage_joaat("vehicle_paint4_enveff.sps")));
         assert!(!is_vehicle_paint_shader(rage_joaat("vehicle_mesh.sps")));
     }
