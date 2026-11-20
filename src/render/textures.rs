@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use image::RgbaImage;
 
-use rage_formats::texture_utils::to_rgba_image;
 use rage_formats::rage_joaat;
+use rage_formats::texture_utils::to_rgba_image;
 use rage_formats::ytd::YtdTexture;
 
 /// Decoded textures, in priority layers: a name is resolved against layer 0
@@ -52,6 +52,14 @@ impl TextureSet {
         }
         self.layers[0].insert(rage_joaat(&name.to_lowercase()), image);
         true
+    }
+
+    /// Makes `name` resolve to `image` ahead of every texture layer.
+    pub fn override_texture(&mut self, name: &str, image: RgbaImage) {
+        if self.layers.is_empty() {
+            self.layers.push(HashMap::new());
+        }
+        self.layers[0].insert(rage_joaat(&name.to_lowercase()), image);
     }
 
     /// The image bound to `name`, searching layers in order.
@@ -104,5 +112,14 @@ mod tests {
         // A later layer never shadows the alias.
         set.push_layer(&[texture("police_sign_1", [0, 255, 0, 255])]);
         assert_eq!(set.get("police_sign_1").unwrap().get_pixel(0, 0).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn override_texture_wins_over_existing_layers() {
+        let mut set = TextureSet::new();
+        set.push_layer(&[texture("plate01", [255, 255, 255, 255])]);
+        set.push_layer(&[texture("plate01", [80, 80, 80, 255])]);
+        set.override_texture("plate01", RgbaImage::from_pixel(1, 1, image::Rgba([12, 12, 12, 255])));
+        assert_eq!(set.get("plate01").unwrap().get_pixel(0, 0).0, [12, 12, 12, 255]);
     }
 }
